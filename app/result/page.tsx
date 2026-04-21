@@ -261,6 +261,7 @@ export default function ResultPage() {
         title="一键生成优化简历"
         price="¥99"
         description="AI 优化逻辑 + 导师灵魂润色 + Vibe ID 深度链接——让 ATS 和 HR 同时认可你"
+        productTier="resume"
       />
       <CustomerServiceButton />
     </main>

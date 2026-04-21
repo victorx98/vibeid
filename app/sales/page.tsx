@@ -173,6 +173,7 @@ export default function SalesPage() {
         title="解锁所有导师建议"
         price="¥39"
         description="查看 4 位大厂导师针对你简历的完整修改建议"
+        productTier="basic"
       />
       <CustomerServiceButton />
     </main>

@@ -1,5 +1,12 @@
 import type { NextRequest } from 'next/server'
 
+import { logWarn } from './logger'
+
+// NOTE: this limiter uses a process-local Map. It bounds bursts from one
+// honest caller, but it does NOT coordinate across lambdas/containers. For
+// production we must move to a shared backend (Upstash Redis, Vercel KV, or
+// Postgres SKIP LOCKED) before the limits in RATE_LIMITS can be trusted as
+// security controls. See launch-hardening-plan-v2.md §2.7.
 type RequestLike = Pick<NextRequest, 'headers'>
 
 export interface RateLimitConfig {
@@ -23,6 +30,7 @@ interface Bucket {
 
 const globalStore = globalThis as typeof globalThis & {
   __vibeidRateLimitStore?: Map<string, Bucket>
+  __vibeidRateLimitWarned?: boolean
 }
 
 const rateLimitStore =
@@ -33,7 +41,18 @@ export const RATE_LIMITS = {
   analyze: { name: 'analyze', max: 5, windowMs: 60 * 60 * 1000 },
   optimize: { name: 'optimize', max: 10, windowMs: 60 * 60 * 1000 },
   previewOptimize: { name: 'preview-optimize', max: 30, windowMs: 60_000 },
+  checkoutConfirm: { name: 'checkout-confirm', max: 10, windowMs: 60 * 60 * 1000 },
 } as const satisfies Record<string, RateLimitConfig>
+
+function warnOnceInProduction() {
+  if (process.env.NODE_ENV !== 'production') return
+  if (globalStore.__vibeidRateLimitWarned) return
+  globalStore.__vibeidRateLimitWarned = true
+  logWarn('rate_limit_in_memory', {
+    detail:
+      'Rate limiter is process-local. Swap for a shared backend before relying on these limits as a security control.',
+  })
+}
 
 export function getClientIp(request: RequestLike): string {
   const forwardedFor = request.headers.get('x-forwarded-for')
@@ -52,6 +71,8 @@ export function getClientIp(request: RequestLike): string {
 }
 
 export function checkRateLimit(request: RequestLike, config: RateLimitConfig): RateLimitResult {
+  warnOnceInProduction()
+
   const now = Date.now()
   const ip = getClientIp(request)
   const key = `${config.name}:${ip}`

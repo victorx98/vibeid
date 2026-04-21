@@ -2,7 +2,11 @@ import { NextRequest } from 'next/server'
 import { ZodError } from 'zod'
 
 import { callClaude } from '@/lib/claude'
-import { logError } from '@/lib/logger'
+import {
+  readEntitlementCookie,
+  verifyEntitlementToken,
+} from '@/lib/entitlements'
+import { logError, logWarn } from '@/lib/logger'
 import { USER_CONTENT_GUARDRAIL, toPromptBlock } from '@/lib/prompting'
 import {
   RATE_LIMITS,
@@ -20,6 +24,21 @@ export async function POST(request: NextRequest) {
     return Response.json(
       { error: '请求过于频繁，请稍后再试' },
       { status: 429, headers: createRateLimitHeaders(rateLimit) }
+    )
+  }
+
+  // Paywall enforcement: the optimized resume is the paid product, so the
+  // caller must present a signed entitlement cookie granting the `resume`
+  // tier. Without this, a direct POST bypasses the client-side paywall.
+  const entitlementCheck = verifyEntitlementToken(
+    readEntitlementCookie(request),
+    'resume'
+  )
+  if (!entitlementCheck.valid) {
+    logWarn('optimize_denied_no_entitlement', { reason: entitlementCheck.reason })
+    return Response.json(
+      { error: '请先完成购买再使用简历优化功能' },
+      { status: 402, headers: createRateLimitHeaders(rateLimit) }
     )
   }
 

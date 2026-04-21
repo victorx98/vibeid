@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
-import { AlertCircle } from 'lucide-react'
+import { AlertCircle, CheckCircle } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { CheckCircle } from 'lucide-react'
-import { demoUnlocksEnabled } from '@/lib/runtime-config'
+import { getApiErrorMessage } from '@/lib/client-api'
+
+type ProductTier = 'basic' | 'resume'
 
 interface PaymentModalProps {
   open: boolean
@@ -14,36 +15,61 @@ interface PaymentModalProps {
   title: string
   price: string
   description: string
+  productTier: ProductTier
 }
 
-export default function PaymentModal({ open, onClose, onSuccess, title, price, description }: PaymentModalProps) {
-  const [stage, setStage] = useState<'pay' | 'loading' | 'success'>('pay')
-  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([])
+type Stage = 'pay' | 'loading' | 'success'
 
-  const clearTimers = useCallback(() => {
-    timersRef.current.forEach(t => clearTimeout(t))
-    timersRef.current = []
+export default function PaymentModal({
+  open,
+  onClose,
+  onSuccess,
+  title,
+  price,
+  description,
+  productTier,
+}: PaymentModalProps) {
+  const [stage, setStage] = useState<Stage>('pay')
+  const [error, setError] = useState<string | null>(null)
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearSuccessTimer = useCallback(() => {
+    if (successTimerRef.current) {
+      clearTimeout(successTimerRef.current)
+      successTimerRef.current = null
+    }
   }, [])
 
-  function handlePay() {
-    if (!demoUnlocksEnabled) return
-
-    clearTimers()
+  async function handlePay() {
+    setError(null)
     setStage('loading')
-    const t1 = setTimeout(() => {
+    try {
+      const res = await fetch('/api/checkout/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ productTier }),
+      })
+      if (!res.ok) {
+        const message = await getApiErrorMessage(res, '支付确认失败，请稍后重试')
+        throw new Error(message)
+      }
       setStage('success')
-      const t2 = setTimeout(() => {
+      clearSuccessTimer()
+      successTimerRef.current = setTimeout(() => {
         setStage('pay')
         onSuccess()
       }, 1000)
-      timersRef.current.push(t2)
-    }, 1500)
-    timersRef.current.push(t1)
+    } catch (err) {
+      setStage('pay')
+      setError(err instanceof Error ? err.message : '支付确认失败，请稍后重试')
+    }
   }
 
   function handleClose() {
-    clearTimers()
+    clearSuccessTimer()
     setStage('pay')
+    setError(null)
     onClose()
   }
 
@@ -58,24 +84,25 @@ export default function PaymentModal({ open, onClose, onSuccess, title, price, d
           <div className="space-y-4">
             <p className="text-gray-600">{description}</p>
             <div className="text-3xl font-bold text-center" style={{ color: '#2A6041' }}>{price}</div>
-            {demoUnlocksEnabled ? (
-              <div className="flex gap-3">
-                <Button onClick={handlePay} className="flex-1 bg-green-500 hover:bg-green-600 text-white">
-                  <span className="mr-2">💬</span>微信支付
-                </Button>
-                <Button onClick={handlePay} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white">
-                  <span className="mr-2">🔷</span>支付宝
-                </Button>
-              </div>
-            ) : (
+
+            {error && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                <div className="mb-2 flex items-center gap-2 font-medium">
+                <div className="mb-1 flex items-center gap-2 font-medium">
                   <AlertCircle className="h-4 w-4" />
-                  当前环境已禁用演示支付
+                  无法完成支付
                 </div>
-                <p>支付系统未接入前，不会再模拟支付成功并自动解锁内容。</p>
+                <p>{error}</p>
               </div>
             )}
+
+            <div className="flex gap-3">
+              <Button onClick={handlePay} className="flex-1 bg-green-500 hover:bg-green-600 text-white">
+                <span className="mr-2">💬</span>微信支付
+              </Button>
+              <Button onClick={handlePay} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white">
+                <span className="mr-2">🔷</span>支付宝
+              </Button>
+            </div>
           </div>
         )}
 

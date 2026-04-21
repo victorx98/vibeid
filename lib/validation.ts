@@ -80,9 +80,14 @@ export const previewOptimizeRequestSchema = z.object({
   targetRole: requiredTrimmedString(2, MAX_TARGET_ROLE_CHARS),
 })
 
+export const checkoutConfirmRequestSchema = z.object({
+  productTier: z.enum(['basic', 'resume']),
+})
+
 export type AnalyzeRequest = z.infer<typeof analyzeRequestSchema>
 export type OptimizeResumeRequest = z.infer<typeof optimizeResumeRequestSchema>
 export type PreviewOptimizeRequest = z.infer<typeof previewOptimizeRequestSchema>
+export type CheckoutConfirmRequest = z.infer<typeof checkoutConfirmRequestSchema>
 
 export function getResumeUploadKind(fileName: string): ResumeUploadKind | null {
   const lowerName = fileName.toLowerCase()
