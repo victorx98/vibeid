@@ -3,10 +3,11 @@
 import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Copy, Check, ChevronDown, AlertCircle, CheckCircle, ExternalLink, ArrowLeft, X, Sparkles } from 'lucide-react'
+import { Copy, Check, AlertCircle, CheckCircle, ExternalLink, ArrowLeft, X, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import CustomerServiceButton from '@/components/shared/CustomerServiceButton'
 import { getSession } from '@/lib/session'
+import { publicVibeSampleEnabled } from '@/lib/runtime-config'
 import { ResumeSession } from '@/lib/types'
 import {
   getEnrichedSkills, getMissingSkills, calcMatchPct,
@@ -14,7 +15,7 @@ import {
 } from '@/lib/skillGap'
 
 const VIBE_ID_URL = 'https://vibeid.co/henry_zheng'
-const EMBED_URL   = '/vibe-id-sample/index.html'
+const EMBED_URL = publicVibeSampleEnabled ? '/vibe-id-sample/index.html' : null
 
 const completionScore = 47
 
@@ -121,7 +122,10 @@ export default function VibeIdPage() {
   useEffect(() => {
     const s = getSession()
     if (!s || !s.unlockedTiers.includes('resume')) { router.push('/'); return }
-    setSession(s)
+    const frame = window.requestAnimationFrame(() => {
+      setSession(s)
+    })
+    return () => window.cancelAnimationFrame(frame)
   }, [router])
 
   // Compute missing skills from session
@@ -141,13 +145,7 @@ export default function VibeIdPage() {
     return missingSkills.filter(s => coverage.includes(s.name)).map(s => s.name)
   }
 
-  // ATS prediction: current match% + how much a project would add
   const atsBase = session?.atsScore ?? 62
-  function predictATS(coveredCount: number): number {
-    // Each covered missing skill adds ~3-4 ATS points (diminishing returns)
-    const boost = coveredCount * 3.5
-    return Math.min(Math.round(atsBase + boost), 95)
-  }
 
   const totalMissing = missingSkills.length
   // How many missing skills ALL 6 projects cover combined (deduplicated)
@@ -250,7 +248,20 @@ export default function VibeIdPage() {
               <span className="text-xs truncate" style={{ color: '#9CA3AF' }}>{VIBE_ID_URL}</span>
             </div>
             <div style={{ height: '600px', overflow: 'hidden' }}>
-              <iframe src={EMBED_URL} className="w-full h-full" style={{ border: 'none' }} title="Vibe ID Preview" />
+              {EMBED_URL ? (
+                <iframe src={EMBED_URL} className="w-full h-full" style={{ border: 'none' }} title="Vibe ID Preview" />
+              ) : (
+                <div className="flex h-full items-center justify-center bg-neutral-50 px-8 text-center">
+                  <div>
+                    <p className="text-lg font-semibold text-neutral-900">Vibe ID 预览已在当前环境关闭</p>
+                    <p className="mt-3 text-sm leading-6 text-neutral-600">
+                      生产环境默认不再公开暴露静态示例页面。如需本地演示，请开启
+                      <code className="mx-1 rounded bg-neutral-200 px-1.5 py-0.5 text-xs">NEXT_PUBLIC_ENABLE_VIBE_SAMPLE</code>
+                      后重启应用。
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </motion.div>
 

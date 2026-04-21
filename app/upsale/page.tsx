@@ -150,7 +150,10 @@ export default function UpsalePage() {
   useEffect(() => {
     const s = getSession()
     if (!s || !s.unlockedTiers.includes('resume')) { router.push('/'); return }
-    setSession(s)
+    const frame = window.requestAnimationFrame(() => {
+      setSession(s)
+    })
+    return () => window.cancelAnimationFrame(frame)
   }, [router])
 
   if (!session) return null

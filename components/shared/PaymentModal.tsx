@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
+import { AlertCircle } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { CheckCircle } from 'lucide-react'
+import { demoUnlocksEnabled } from '@/lib/runtime-config'
 
 interface PaymentModalProps {
   open: boolean
@@ -24,6 +26,8 @@ export default function PaymentModal({ open, onClose, onSuccess, title, price, d
   }, [])
 
   function handlePay() {
+    if (!demoUnlocksEnabled) return
+
     clearTimers()
     setStage('loading')
     const t1 = setTimeout(() => {
@@ -54,14 +58,24 @@ export default function PaymentModal({ open, onClose, onSuccess, title, price, d
           <div className="space-y-4">
             <p className="text-gray-600">{description}</p>
             <div className="text-3xl font-bold text-center" style={{ color: '#2A6041' }}>{price}</div>
-            <div className="flex gap-3">
-              <Button onClick={handlePay} className="flex-1 bg-green-500 hover:bg-green-600 text-white">
-                <span className="mr-2">💬</span>微信支付
-              </Button>
-              <Button onClick={handlePay} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white">
-                <span className="mr-2">🔷</span>支付宝
-              </Button>
-            </div>
+            {demoUnlocksEnabled ? (
+              <div className="flex gap-3">
+                <Button onClick={handlePay} className="flex-1 bg-green-500 hover:bg-green-600 text-white">
+                  <span className="mr-2">💬</span>微信支付
+                </Button>
+                <Button onClick={handlePay} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white">
+                  <span className="mr-2">🔷</span>支付宝
+                </Button>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                <div className="mb-2 flex items-center gap-2 font-medium">
+                  <AlertCircle className="h-4 w-4" />
+                  当前环境已禁用演示支付
+                </div>
+                <p>支付系统未接入前，不会再模拟支付成功并自动解锁内容。</p>
+              </div>
+            )}
           </div>
         )}
 

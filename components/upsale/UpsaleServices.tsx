@@ -317,7 +317,7 @@ export default function UpsaleServices() {
                 <Star key={i} className="w-4 h-4 text-amber-400 fill-amber-400" />
               ))}
             </div>
-            <span className="text-xs" style={{ color: '#6B7280' }}>"比花几千块上课有用多了" — 2026届学员</span>
+            <span className="text-xs" style={{ color: '#6B7280' }}>&ldquo;比花几千块上课有用多了&rdquo; — 2026届学员</span>
           </div>
           <div className="flex items-center justify-center gap-2 mb-4">
             <span className="text-sm line-through" style={{ color: '#9CA3AF' }}>$2,999</span>

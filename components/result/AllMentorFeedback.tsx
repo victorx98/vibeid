@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
-import { Check, Circle } from 'lucide-react'
+import { Check } from 'lucide-react'
 import MentorCard from '@/components/sales/MentorCard'
 import { MentorAdvice, AdviceFeedback } from '@/lib/types'
 

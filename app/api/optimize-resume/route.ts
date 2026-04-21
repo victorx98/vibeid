@@ -1,20 +1,35 @@
 import { NextRequest } from 'next/server'
+import { ZodError } from 'zod'
+
 import { callClaude } from '@/lib/claude'
-import { MentorAdvice, MentorAdviceItem, AdviceFeedback } from '@/lib/types'
+import { logError } from '@/lib/logger'
+import { USER_CONTENT_GUARDRAIL, toPromptBlock } from '@/lib/prompting'
+import {
+  RATE_LIMITS,
+  checkRateLimit,
+  createRateLimitHeaders,
+} from '@/lib/rate-limit'
+import { optimizeResumeRequestSchema } from '@/lib/validation'
+import { MentorAdviceItem } from '@/lib/types'
+
+export const runtime = 'nodejs'
 
 export async function POST(request: NextRequest) {
-  try {
-    const { resumeText, targetRole, jobDescription, mentorAdvice, adviceFeedback } = await request.json() as {
-      resumeText: string
-      targetRole: string
-      jobDescription?: string
-      mentorAdvice: MentorAdvice[]
-      adviceFeedback?: Record<string, AdviceFeedback>
-    }
+  const rateLimit = checkRateLimit(request, RATE_LIMITS.optimize)
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: '请求过于频繁，请稍后再试' },
+      { status: 429, headers: createRateLimitHeaders(rateLimit) }
+    )
+  }
 
-    if (!resumeText || !targetRole) {
-      return Response.json({ error: 'Missing required fields' }, { status: 400 })
-    }
+  try {
+    const rawBody = await request.json()
+    const { resumeText, targetRole, jobDescription, mentorAdvice, adviceFeedback } =
+      optimizeResumeRequestSchema.parse(rawBody)
+
+    const escapeRegExp = (value: string) =>
+      value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
     // ── Step 1: Filter advice by user feedback ─────────────────────
     const acceptedAdvice: {
@@ -124,12 +139,13 @@ export async function POST(request: NextRequest) {
 
       const inputs = group.mentorInputs.map((inp, j) => {
         // Strip any mentor real names from mentorPerspective text
+        const mentorPattern = new RegExp(escapeRegExp(inp.mentor), 'g')
         const cleanPerspective = (inp.mentorPerspective || '(未提供)')
-          .replace(new RegExp(inp.mentor, 'g'), '业内导师')
+          .replace(mentorPattern, '业内导师')
         const cleanProblem = (inp.problem || '(未提供)')
-          .replace(new RegExp(inp.mentor, 'g'), '业内导师')
+          .replace(mentorPattern, '业内导师')
         const cleanSuggestion = (inp.suggestion || '(未提供)')
-          .replace(new RegExp(inp.mentor, 'g'), '业内导师')
+          .replace(mentorPattern, '业内导师')
 
         const parts = [
           `  [导师${j + 1} - ${inp.company}行业背景] [${inp.priority}]`,
@@ -138,7 +154,7 @@ export async function POST(request: NextRequest) {
           `    改写方向: ${cleanSuggestion}`,
         ]
         if (inp.example) {
-          const cleanExample = inp.example.replace(new RegExp(inp.mentor, 'g'), '业内导师')
+          const cleanExample = inp.example.replace(mentorPattern, '业内导师')
           parts.push(`    改写示范: ${cleanExample}`)
         }
         return parts.join('\n')
@@ -178,20 +194,23 @@ export async function POST(request: NextRequest) {
 9. Section 的顺序保持与原始简历一致
 10. 如果原始简历是英文，保持英文；如果是中文，保持中文
 
-原始简历文本：
-${resumeText.slice(0, 5000)}`
+${toPromptBlock('resume_text', resumeText, 5_000)}`
 
     const formattedResume = await callClaude(
-      '你是一个简历格式化工具。只做纯文本到Markdown的格式转换，不修改任何内容。',
+      `你是一个简历格式化工具。只做纯文本到 Markdown 的格式转换，不修改任何内容。
+
+${USER_CONTENT_GUARDRAIL}`,
       formatPrompt,
       0,
-      { maxTokens: 4096 }
+      { maxTokens: 4096, timeoutMs: 60_000 }
     )
 
     // Phase B: Apply advice
     const jdOptimizeSection = jobDescription
-      ? `\n\n## 目标职位 JD（改写时必须参考）\n${(jobDescription as string).slice(0, 2000)}\n\n重要：改写 bullet 时，优先融入 JD 中出现的关键词和技能名称，确保优化后的简历与目标 JD 高度匹配。`
+      ? `\n\n## 目标职位 JD（改写时必须参考）\n${toPromptBlock('job_description', jobDescription, 2_000)}\n\n重要：改写 bullet 时，优先融入 JD 中出现的关键词和技能名称，确保优化后的简历与目标 JD 高度匹配。`
       : ''
+
+    const groupedInstructions = acceptedSection || '（无修改指令，请原样输出简历）'
 
     const optimizePrompt = `你是一位专业的简历优化师。在下面的 Markdown 简历基础上，根据导师建议进行修改。
 
@@ -227,14 +246,24 @@ ${resumeText.slice(0, 5000)}`
 
 ## 当前 Markdown 简历（在此基础上修改）
 
-${formattedResume}
+${toPromptBlock('target_role', targetRole, 120)}
+
+---
+
+## 目标岗位
+
+以上目标岗位用于判断关键词和改写方向。
+
+---
+
+${toPromptBlock('current_resume_markdown', formattedResume, 8_000)}
 
 ---
 
 ## 修改指令（按简历位置分组，每个修改点执行一次改写）
 
-${acceptedSection || '（无修改指令，请原样输出简历）'}
-${skippedSection}
+${toPromptBlock('rewrite_instructions', groupedInstructions, 8_000)}
+${skippedSection ? `\n${toPromptBlock('skipped_instructions', skippedSection, 3_000)}` : ''}
 ${jdOptimizeSection}
 
 ---
@@ -242,10 +271,12 @@ ${jdOptimizeSection}
 请输出修改后的完整简历 Markdown。保持原始结构不变，只改建议涉及的部分。`
 
     let optimizedResume = await callClaude(
-      '你是一位简历优化师。严格按要求在原始简历基础上做最小化修改，保持原始结构不变。',
+      `你是一位简历优化师。严格按要求在原始简历基础上做最小化修改，保持原始结构不变。
+
+${USER_CONTENT_GUARDRAIL}`,
       optimizePrompt,
       0,
-      { maxTokens: 8192 }
+      { maxTokens: 8192, timeoutMs: 90_000 }
     )
 
     // ── Post-processing: sanitize output ─────────────────────────
@@ -286,9 +317,22 @@ ${jdOptimizeSection}
       .replace(/\n?```\s*$/gm, '')
       .trim()
 
-    return Response.json({ optimizedResume })
+    return Response.json(
+      { optimizedResume },
+      { headers: createRateLimitHeaders(rateLimit) }
+    )
   } catch (error) {
-    console.error('Optimize error:', error)
-    return Response.json({ error: 'Optimization failed' }, { status: 500 })
+    if (error instanceof ZodError) {
+      return Response.json(
+        { error: '请求参数不合法，请刷新页面后重试' },
+        { status: 400, headers: createRateLimitHeaders(rateLimit) }
+      )
+    }
+
+    logError('resume_optimization_failed', error)
+    return Response.json(
+      { error: '简历优化失败，请稍后重试' },
+      { status: 500, headers: createRateLimitHeaders(rateLimit) }
+    )
   }
 }

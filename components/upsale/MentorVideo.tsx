@@ -14,9 +14,6 @@ interface VideoItem {
 
 // Generate video data per mentor based on their advice
 function generateVideoData(mentor: MentorAdvice, targetRole: string): VideoItem {
-  const firstAdvice = mentor.advice[0]
-  const problem = typeof firstAdvice === 'string' ? firstAdvice : firstAdvice?.problem || '简历核心问题'
-
   // Pain point headlines mapped to common issues
   const painPoints = [
     `为什么你的简历总被ATS筛掉？`,

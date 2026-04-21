@@ -20,7 +20,10 @@ export default function SalesPage() {
   useEffect(() => {
     const s = getSession()
     if (!s) { router.push('/'); return }
-    setSession(s)
+    const frame = window.requestAnimationFrame(() => {
+      setSession(s)
+    })
+    return () => window.cancelAnimationFrame(frame)
   }, [router])
 
   function handlePaymentSuccess() {

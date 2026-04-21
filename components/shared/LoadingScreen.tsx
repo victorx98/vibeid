@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CheckCircle, Loader2, Circle, Sparkles } from 'lucide-react'
 
@@ -93,8 +93,6 @@ export default function LoadingScreen({ mode = 'analyze', stage, completed, onCo
 
   // ── Real progress bar ──────────────────────────────────────────────────────
   const [progress, setProgress] = useState(3)
-  const progressRef = useRef(progress)
-  progressRef.current = progress
 
   // Resolve current stage key
   const stageKey = stage ?? (mode === 'optimize' ? 'optimizing-1' : 'parsing')
@@ -102,7 +100,10 @@ export default function LoadingScreen({ mode = 'analyze', stage, completed, onCo
 
   // On stage change: jump to new anchor, then crawl toward target
   useEffect(() => {
-    setProgress(stageInfo.jump)
+    const frame = window.requestAnimationFrame(() => {
+      setProgress(stageInfo.jump)
+    })
+    return () => window.cancelAnimationFrame(frame)
   }, [stageKey, stageInfo.jump])
 
   // Crawl: every 500ms inch closer to target (never reaches it — API will call onCompleted)
@@ -121,11 +122,16 @@ export default function LoadingScreen({ mode = 'analyze', stage, completed, onCo
   // When completed: jump to 100% then call onCompleted after animation
   useEffect(() => {
     if (!completed) return
-    setProgress(100)
+    const frame = window.requestAnimationFrame(() => {
+      setProgress(100)
+    })
     const id = setTimeout(() => {
       onCompleted?.()
     }, 750)
-    return () => clearTimeout(id)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      clearTimeout(id)
+    }
   }, [completed, onCompleted])
 
   // Cap at 99 normally, allow 100 only when completed
@@ -136,7 +142,12 @@ export default function LoadingScreen({ mode = 'analyze', stage, completed, onCo
   // Sub-step drip within the "analyzing" block (visual only)
   const [analyzingSubStep, setAnalyzingSubStep] = useState(0)
   useEffect(() => {
-    if (stageKey !== 'analyzing') { setAnalyzingSubStep(0); return }
+    if (stageKey !== 'analyzing') {
+      const frame = window.requestAnimationFrame(() => {
+        setAnalyzingSubStep(0)
+      })
+      return () => window.cancelAnimationFrame(frame)
+    }
     const id = setInterval(() => {
       setAnalyzingSubStep(s => Math.min(s + 1, 2))
     }, 5000)
@@ -146,12 +157,22 @@ export default function LoadingScreen({ mode = 'analyze', stage, completed, onCo
   // Sub-step drip within optimize stages (one active step at a time per stage)
   const [optimizingSubStep, setOptimizingSubStep] = useState(0)
   useEffect(() => {
-    if (!stageKey.startsWith('optimizing')) { setOptimizingSubStep(0); return }
-    setOptimizingSubStep(0)
+    if (!stageKey.startsWith('optimizing')) {
+      const frame = window.requestAnimationFrame(() => {
+        setOptimizingSubStep(0)
+      })
+      return () => window.cancelAnimationFrame(frame)
+    }
+    const resetFrame = window.requestAnimationFrame(() => {
+      setOptimizingSubStep(0)
+    })
     const id = setInterval(() => {
       setOptimizingSubStep(s => Math.min(s + 1, 1))
     }, 8000)
-    return () => clearInterval(id)
+    return () => {
+      window.cancelAnimationFrame(resetFrame)
+      clearInterval(id)
+    }
   }, [stageKey])
 
   function analyzeSubStatus(step: Step, index: number): 'done' | 'active' | 'pending' {
@@ -193,9 +214,12 @@ export default function LoadingScreen({ mode = 'analyze', stage, completed, onCo
   const [msgIdx, setMsgIdx] = useState(0)
   const [liveMsg, setLiveMsg] = useState(msgs[0])
   useEffect(() => {
-    setMsgIdx(0)
-    setLiveMsg(msgs[0])
-  }, [stageKey])   // reset on stage change
+    const frame = window.requestAnimationFrame(() => {
+      setMsgIdx(0)
+      setLiveMsg(msgs[0])
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [stageKey, msgs])   // reset on stage change
 
   useEffect(() => {
     if (completed) return

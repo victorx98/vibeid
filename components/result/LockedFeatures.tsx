@@ -71,13 +71,24 @@ export default function LockedFeatures({ resumeText, targetRole, onUnlock }: Loc
 
   useEffect(() => {
     if (!originalBullet || !targetRole) return
-    // Generate preview optimization for the first bullet
-    setLoading(true)
-    callPreviewOptimize(originalBullet, targetRole)
-      .then(optimized => {
-        if (optimized) setPreviewBullet({ original: originalBullet, optimized })
-      })
-      .finally(() => setLoading(false))
+    let cancelled = false
+    const frame = window.requestAnimationFrame(() => {
+      setLoading(true)
+      callPreviewOptimize(originalBullet, targetRole)
+        .then(optimized => {
+          if (!cancelled && optimized) {
+            setPreviewBullet({ original: originalBullet, optimized })
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    })
+
+    return () => {
+      cancelled = true
+      window.cancelAnimationFrame(frame)
+    }
   }, [originalBullet, targetRole])
 
   return (
@@ -160,7 +171,6 @@ export default function LockedFeatures({ resumeText, targetRole, onUnlock }: Loc
       {/* Feature grid — compact */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {features.map((feat, i) => {
-          const Icon = feat.icon
           return (
             <div
               key={i}

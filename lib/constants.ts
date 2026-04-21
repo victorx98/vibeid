@@ -1,0 +1,5 @@
+export const MAX_RESUME_UPLOAD_BYTES = 10 * 1024 * 1024
+export const MAX_RESUME_TEXT_CHARS = 50_000
+export const MAX_JOB_DESCRIPTION_CHARS = 20_000
+export const MAX_TARGET_ROLE_CHARS = 120
+export const MAX_BULLET_CHARS = 600

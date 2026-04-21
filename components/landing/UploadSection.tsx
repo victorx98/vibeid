@@ -3,6 +3,8 @@
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Upload, FileText, X } from 'lucide-react'
+import { getApiErrorMessage } from '@/lib/client-api'
+import { MAX_RESUME_UPLOAD_BYTES } from '@/lib/constants'
 import { setSession } from '@/lib/session'
 import LoadingScreen from '@/components/shared/LoadingScreen'
 
@@ -19,10 +21,16 @@ export default function UploadSection() {
 
   const handleFile = useCallback((f: File) => {
     const ext = f.name.toLowerCase()
-    if (!ext.endsWith('.pdf') && !ext.endsWith('.doc') && !ext.endsWith('.docx')) {
-      setError('请上传 PDF 或 Word 文件')
+    if (!ext.endsWith('.pdf') && !ext.endsWith('.docx')) {
+      setError('请上传 PDF 或 DOCX 文件')
       return
     }
+
+    if (f.size > MAX_RESUME_UPLOAD_BYTES) {
+      setError('文件过大，请上传 10MB 以内的 PDF 或 DOCX 简历')
+      return
+    }
+
     setError('')
     setFile(f)
   }, [])
@@ -48,7 +56,7 @@ export default function UploadSection() {
       const formData = new FormData()
       formData.append('file', file)
       const parseRes = await fetch('/api/parse-resume', { method: 'POST', body: formData })
-      if (!parseRes.ok) throw new Error('简历解析失败')
+      if (!parseRes.ok) throw new Error(await getApiErrorMessage(parseRes, '简历解析失败'))
       const { text } = await parseRes.json()
 
       // Step 2: Analyze
@@ -58,7 +66,7 @@ export default function UploadSection() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resumeText: text, targetRole, jobDescription: jobDescription.trim() || undefined }),
       })
-      if (!analyzeRes.ok) throw new Error('分析失败')
+      if (!analyzeRes.ok) throw new Error(await getApiErrorMessage(analyzeRes, '分析失败'))
       const data = await analyzeRes.json()
 
       // Save session
@@ -117,7 +125,7 @@ export default function UploadSection() {
             上传你的简历
           </h2>
           <p className="body-text">
-            支持 PDF 和 Word 格式，30秒内获得专业分析
+            支持 PDF 和 DOCX 格式，30秒内获得专业分析
           </p>
         </div>
 
@@ -159,10 +167,10 @@ export default function UploadSection() {
                 <p style={{ color: '#1A1A1A', fontSize: '15px', marginBottom: '4px' }}>
                   拖拽简历到此处，或点击上传
                 </p>
-                <p style={{ fontSize: '13px', color: '#6B7280' }}>支持 PDF / Word 格式</p>
+                <p style={{ fontSize: '13px', color: '#6B7280' }}>支持 PDF / DOCX 格式，最大 10MB</p>
                 <input
                   type="file"
-                  accept=".pdf,.doc,.docx"
+                  accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 />

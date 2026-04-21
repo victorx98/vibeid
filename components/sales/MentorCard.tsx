@@ -22,7 +22,6 @@ const priorityStyles: Record<string, { bg: string; text: string }> = {
 
 interface AdviceBlockProps {
   item: MentorAdviceItem
-  index: number
   feedback?: AdviceFeedback
   onAccept?: (value: boolean) => void
   onHelpful?: (value: boolean) => void
@@ -81,7 +80,7 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-function AdviceBlock({ item, index, feedback, onAccept, onHelpful }: AdviceBlockProps) {
+function AdviceBlock({ item, feedback, onAccept, onHelpful }: AdviceBlockProps) {
   const style = priorityStyles[item.priority] || { bg: 'bg-gray-100', text: 'text-gray-700' }
 
   return (
@@ -257,7 +256,6 @@ export default function MentorCard({ mentor, index, feedbackMode, feedbackMap, o
             ) : (
               <AdviceBlock
                 item={item}
-                index={i}
                 feedback={feedbackMode ? feedbackMap?.[`${mentor.id}-${i}`] : undefined}
                 onAccept={feedbackMode ? (v) => onFeedback?.(mentor.id, i, 'accepted', v) : undefined}
                 onHelpful={feedbackMode ? (v) => onFeedback?.(mentor.id, i, 'helpful', v) : undefined}

@@ -2,36 +2,6 @@
   const ns = window.aiResume || (window.aiResume = {});
   const data = window.resumeContent;
 
-  const SYSTEM_CONTEXT = buildContext();
-
-  function buildContext() {
-    const p = data.profile;
-    const exp = data.experience.map(
-      (e) => `${e.role} at ${e.organization} (${e.dates}): ${e.bullets.join(" ")}`
-    ).join("\n");
-    const edu = data.education.map((e) => `${e.degree}, ${e.school} (${e.dates})`).join("; ");
-    const projects = data.projects.map(
-      (proj) => `${proj.title} (${proj.source}): ${proj.summary}`
-    ).join("\n");
-    const stack = data.stack.map((s) => s.label).join(", ");
-
-    return [
-      `You are an assistant embedded on ${p.name}'s portfolio page.`,
-      `Answer questions about their background concisely and helpfully.`,
-      `If a question is unrelated, politely redirect to the resume topics.`,
-      `\n--- Profile ---`,
-      p.summary,
-      `\n--- Experience ---`,
-      exp,
-      `\n--- Education ---`,
-      edu,
-      `\n--- Projects ---`,
-      projects,
-      `\n--- Tech Stack ---`,
-      stack
-    ].join("\n");
-  }
-
   const GREETING = "Hi! I can answer questions about Duke's background, projects, and skills. What would you like to know?";
 
   let messages = [];
@@ -117,38 +87,7 @@
   }
 
   async function getReply(userText) {
-    /* Try Anthropic API if key is configured on the page */
-    const apiKey = window.ANTHROPIC_API_KEY;
-    if (apiKey) {
-      try {
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-            "anthropic-dangerous-direct-browser-access": "true"
-          },
-          body: JSON.stringify({
-            model: "claude-haiku-4-5-20251001",
-            max_tokens: 300,
-            system: SYSTEM_CONTEXT,
-            messages: messages.filter((m) => m.role !== "assistant" || m.content !== GREETING)
-              .concat([{ role: "user", content: userText }])
-              .slice(-10)
-          })
-        });
-
-        if (res.ok) {
-          const json = await res.json();
-          return json.content[0].text;
-        }
-      } catch (_) {
-        /* fall through to local fallback */
-      }
-    }
-
-    /* Local keyword fallback when no API key */
+    /* Static demo uses local keyword fallback only. */
     return localFallback(userText);
   }
 

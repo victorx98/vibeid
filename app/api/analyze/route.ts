@@ -1,12 +1,22 @@
 import { NextRequest } from 'next/server'
+import { ZodError } from 'zod'
+
 import { callClaude } from '@/lib/claude'
 import Database from 'better-sqlite3'
 import path from 'path'
 import fs from 'fs'
+import { logError } from '@/lib/logger'
+import { USER_CONTENT_GUARDRAIL, toPromptBlock, toPromptLine } from '@/lib/prompting'
+import {
+  RATE_LIMITS,
+  checkRateLimit,
+  createRateLimitHeaders,
+} from '@/lib/rate-limit'
+import { analyzeRequestSchema } from '@/lib/validation'
 
-const DB_PATH_RELATIVE = path.join(process.cwd(), 'data', 'resume_material_library.db')
-const DB_PATH_ABSOLUTE = 'C:/Users/Eric/myproject/resume_material_library.db'
-const DB_PATH = fs.existsSync(DB_PATH_RELATIVE) ? DB_PATH_RELATIVE : DB_PATH_ABSOLUTE
+export const runtime = 'nodejs'
+
+const DB_PATH = path.join(process.cwd(), 'data', 'resume_material_library.db')
 
 // ── ATS Strict Scoring System Prompt ──
 const ATS_SYSTEM_PROMPT = `You are an ATS (Applicant Tracking System) strict scoring engine. When given a resume, you analyze it and return a structured ATS score using the strict scoring methodology defined below.
@@ -179,23 +189,32 @@ interface BeforeAfterRow {
 }
 
 export async function POST(request: NextRequest) {
+  const rateLimit = checkRateLimit(request, RATE_LIMITS.analyze)
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: '请求过于频繁，请稍后再试' },
+      { status: 429, headers: createRateLimitHeaders(rateLimit) }
+    )
+  }
+
   try {
-    const { resumeText, targetRole, jobDescription } = await request.json()
-    if (!resumeText || !targetRole) {
-      return Response.json({ error: 'Missing resumeText or targetRole' }, { status: 400 })
+    const rawBody = await request.json()
+    const { resumeText, targetRole, jobDescription } = analyzeRequestSchema.parse(rawBody)
+
+    if (!fs.existsSync(DB_PATH)) {
+      throw new Error(`Mentor knowledge base missing at ${DB_PATH}`)
     }
 
     const jdSection = jobDescription
-      ? `\n\nJob Description (use this to extract keywords and match against resume):\n${(jobDescription as string).slice(0, 3000)}`
+      ? `\n\nJob Description (use this to extract keywords and match against resume):\n${toPromptBlock('job_description', jobDescription, 3000)}`
       : ''
 
     // ══════════════════════════════════════════
     // STEP 1: ATS Scoring + Competition Estimate (parallel)
     // ══════════════════════════════════════════
-    const atsPrompt = `Resume text:
-${resumeText.slice(0, 4000)}
+    const atsPrompt = `${toPromptBlock('resume_text', resumeText, 4000)}
 
-Target role: ${targetRole}${jdSection}
+Target role: ${toPromptLine(targetRole, 120)}${jdSection}
 ${jobDescription ? `
 IMPORTANT: A real Job Description has been provided above. You MUST:
 1. Extract the top 15-20 keywords from the JD (job title, required skills, tools, qualifications, responsibilities)
@@ -224,7 +243,7 @@ Return the ATS analysis as JSON:
   "strengths": ["string"]
 }`
 
-    const competitionPrompt = `Job title: ${targetRole}
+    const competitionPrompt = `Job title: ${toPromptLine(targetRole, 120)}
 
 Return JSON:
 {
@@ -278,7 +297,7 @@ Return JSON:
 
         // Rank mentors by relevance to target role + JD, keep top 25
         const roleKeywords = extractJDKeywords(
-          `${targetRole} ${(jobDescription as string) || ''}`
+          `${targetRole} ${jobDescription || ''}`
         )
         const allMentors = roleKeywords.length > 0
           ? allMentorsRaw
@@ -313,7 +332,7 @@ Return JSON:
         `).all() as SegmentRow[]
 
         // Re-rank by JD keyword overlap when JD is provided
-        const jdKws = extractJDKeywords((jobDescription as string) || '')
+        const jdKws = extractJDKeywords(jobDescription || '')
         let specificSegments: SegmentRow[]
         if (jdKws.length > 0) {
           specificSegments = specificSegmentsRaw
@@ -340,8 +359,16 @@ Return JSON:
 
     // ATS (Sonnet, 2048 tokens) + Competition (Haiku, 1024 tokens) + DB — all parallel
     const [atsResponse, competitionResponse, dbData] = await Promise.all([
-      callClaude(ATS_SYSTEM_PROMPT, atsPrompt, 0, { maxTokens: 2048, cacheSystem: true }),
-      callClaude(COMPETITION_SYSTEM_PROMPT, competitionPrompt, 0, { model: 'claude-haiku-4-5-20251001', maxTokens: 1024 }),
+      callClaude(`${ATS_SYSTEM_PROMPT}\n\n${USER_CONTENT_GUARDRAIL}`, atsPrompt, 0, {
+        maxTokens: 2048,
+        cacheSystem: true,
+        timeoutMs: 60_000,
+      }),
+      callClaude(`${COMPETITION_SYSTEM_PROMPT}\n\n${USER_CONTENT_GUARDRAIL}`, competitionPrompt, 0, {
+        model: 'claude-haiku-4-5-20251001',
+        maxTokens: 1024,
+        timeoutMs: 30_000,
+      }),
       Promise.resolve(queryDB()),
     ])
 
@@ -455,12 +482,12 @@ Return JSON:
 
     // ── Call A user prompt ───────────────────────────────────────────────────
     const unlockedUserPrompt = `## 简历
-${resumeText.slice(0, 2500)}
+${toPromptBlock('resume_text', resumeText, 2500)}
 
-## 目标岗位: ${targetRole}${jobDescription ? `
+## 目标岗位: ${toPromptLine(targetRole, 120)}${jobDescription ? `
 
 ## 目标职位JD（必须参考）
-${(jobDescription as string).slice(0, 1500)}
+${toPromptBlock('job_description', jobDescription, 1500)}
 
 重要：建议必须针对此 JD 的具体要求（职责、技能、资格）。
 - problem 字段：指出简历中缺少 JD 要求的哪项具体内容
@@ -520,9 +547,9 @@ ${baExamples.slice(0, 1500)}
 
     // ── Call B user prompt (Haiku — brief teasers for 3 locked mentors) ──────
     const lockedUserPrompt = `简历摘要：
-${resumeText.slice(0, 600)}
+${toPromptBlock('resume_summary', resumeText, 600)}
 
-目标岗位: ${targetRole}
+目标岗位: ${toPromptLine(targetRole, 120)}
 ATS总分: ${safeATS.final_score}/100，主要问题: ${safeATS.top_issues.slice(0, 2).map((i: { issue: string }) => i.issue).join('；')}
 
 3位导师信息：
@@ -551,8 +578,16 @@ ${lockedMentorList.map((m, i) => fmtMentor(m, i + 2)).join('\n\n')}
 
     // ── Run both mentor calls in parallel ────────────────────────────────────
     const [unlockedRaw, lockedRaw] = await Promise.all([
-      callClaude(UNLOCKED_MENTOR_SYSTEM, unlockedUserPrompt, 0, { maxTokens: 3500, cacheSystem: true }),
-      callClaude(LOCKED_MENTOR_SYSTEM, lockedUserPrompt, 0, { model: 'claude-haiku-4-5-20251001', maxTokens: 2000 }),
+      callClaude(`${UNLOCKED_MENTOR_SYSTEM}\n\n${USER_CONTENT_GUARDRAIL}`, unlockedUserPrompt, 0, {
+        maxTokens: 3500,
+        cacheSystem: true,
+        timeoutMs: 90_000,
+      }),
+      callClaude(`${LOCKED_MENTOR_SYSTEM}\n\n${USER_CONTENT_GUARDRAIL}`, lockedUserPrompt, 0, {
+        model: 'claude-haiku-4-5-20251001',
+        maxTokens: 2000,
+        timeoutMs: 45_000,
+      }),
     ])
 
     // ── Parse results ─────────────────────────────────────────────────────────
@@ -595,18 +630,39 @@ ${lockedMentorList.map((m, i) => fmtMentor(m, i + 2)).join('\n\n')}
     // ══════════════════════════════════════════
     // STEP 5: Return combined result
     // ══════════════════════════════════════════
-    return Response.json({
-      atsScore: safeATS.final_score,
-      atsResult,
-      overallJudgment: mentorResult.overallJudgment,
-      currentSalary: mentorResult.currentSalary,
-      topSalary: mentorResult.topSalary,
-      topCompanies: mentorResult.topCompanies,
-      competition: competitionResult || { job_title: targetRole, base_role: 1000, base_role_reasoning: '', estimated_applicants: 1000, applicant_range: '500-1500', competition_tag: '中等竞争' },
-      mentorAdvice: mentorResult.mentorAdvice,
-    })
+    return Response.json(
+      {
+        atsScore: safeATS.final_score,
+        atsResult,
+        overallJudgment: mentorResult.overallJudgment,
+        currentSalary: mentorResult.currentSalary,
+        topSalary: mentorResult.topSalary,
+        topCompanies: mentorResult.topCompanies,
+        competition:
+          competitionResult || {
+            job_title: targetRole,
+            base_role: 1000,
+            base_role_reasoning: '',
+            estimated_applicants: 1000,
+            applicant_range: '500-1500',
+            competition_tag: '中等竞争',
+          },
+        mentorAdvice: mentorResult.mentorAdvice,
+      },
+      { headers: createRateLimitHeaders(rateLimit) }
+    )
   } catch (error) {
-    console.error('Analyze error:', error)
-    return Response.json({ error: 'Analysis failed', detail: String(error) }, { status: 500 })
+    if (error instanceof ZodError) {
+      return Response.json(
+        { error: '请求参数不合法，请检查简历文本和目标岗位后重试' },
+        { status: 400, headers: createRateLimitHeaders(rateLimit) }
+      )
+    }
+
+    logError('resume_analysis_failed', error)
+    return Response.json(
+      { error: '简历分析失败，请稍后重试' },
+      { status: 500, headers: createRateLimitHeaders(rateLimit) }
+    )
   }
 }

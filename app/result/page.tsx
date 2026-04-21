@@ -8,6 +8,7 @@ import AllMentorFeedback from '@/components/result/AllMentorFeedback'
 import LockedFeatures from '@/components/result/LockedFeatures'
 import PaymentModal from '@/components/shared/PaymentModal'
 import LoadingScreen from '@/components/shared/LoadingScreen'
+import { getApiErrorMessage } from '@/lib/client-api'
 import { getSession, updateSession } from '@/lib/session'
 import CustomerServiceButton from '@/components/shared/CustomerServiceButton'
 import { ResumeSession, AdviceFeedback, ATSResult } from '@/lib/types'
@@ -26,12 +27,6 @@ function FormatComplianceAlert({ atsResult, onUnlock }: { atsResult: ATSResult; 
   const formatScore = atsResult.scores.format_compliance.raw
   if (formatScore >= 85) return null // No alert needed for good format
 
-  // Match format-related issues from ATS results
-  const formatIssues = atsResult.top_issues.filter(issue =>
-    FORMAT_CHECKS.some(check =>
-      check.keywords.some(kw => issue.issue.toLowerCase().includes(kw.toLowerCase()))
-    )
-  )
   const formatPenalties = atsResult.penalties.filter(p =>
     FORMAT_CHECKS.some(check =>
       check.keywords.some(kw => p.reason.toLowerCase().includes(kw.toLowerCase()))
@@ -109,8 +104,11 @@ export default function ResultPage() {
   useEffect(() => {
     const s = getSession()
     if (!s || !s.unlockedTiers.includes('basic')) { router.push('/'); return }
-    setSessionState(s)
-    if (s.adviceFeedback) setFeedbackMap(s.adviceFeedback)
+    const frame = window.requestAnimationFrame(() => {
+      setSessionState(s)
+      if (s.adviceFeedback) setFeedbackMap(s.adviceFeedback)
+    })
+    return () => window.cancelAnimationFrame(frame)
   }, [router])
 
   function handleFeedback(mentorId: string, adviceIndex: number, field: 'accepted' | 'helpful', value: boolean) {
@@ -154,7 +152,7 @@ export default function ResultPage() {
       })
       clearTimeout(stageTimer)
 
-      if (!res.ok) throw new Error('Optimization failed')
+      if (!res.ok) throw new Error(await getApiErrorMessage(res, '优化失败，请重试'))
       const { optimizedResume } = await res.json()
 
       const updated = updateSession({
@@ -166,10 +164,10 @@ export default function ResultPage() {
       // Animate bar to 100%, then navigate via onCompleted callback
       setOptimizeStage('optimizing-2')
       setOptimizeCompleted(true)
-    } catch {
+    } catch (error) {
       clearTimeout(stageTimer)
       setIsOptimizing(false)
-      alert('优化失败，请重试')
+      alert(error instanceof Error ? error.message : '优化失败，请重试')
     }
   }
 
