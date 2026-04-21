@@ -6,6 +6,7 @@ import type { NextRequest } from 'next/server'
 export type EntitlementTier = 'basic' | 'resume'
 
 export const ENTITLEMENT_COOKIE_NAME = 'vibeid_entitlement'
+export const ENTITLEMENTS_SECRET_MIN_LENGTH = 32
 const DEFAULT_TTL_SECONDS = 24 * 60 * 60
 
 interface EntitlementPayload {
@@ -15,15 +16,24 @@ interface EntitlementPayload {
   exp: number
 }
 
-function getSecret(): Buffer {
+function readSecret(): Buffer | null {
   const secret = process.env.ENTITLEMENTS_SECRET
-  if (!secret || secret.length < 32) {
-    // Fail loudly instead of silently accepting a weak or missing secret.
-    throw new Error(
-      'ENTITLEMENTS_SECRET must be set to a value of at least 32 characters'
-    )
-  }
+  if (!secret || secret.length < ENTITLEMENTS_SECRET_MIN_LENGTH) return null
   return Buffer.from(secret, 'utf8')
+}
+
+function requireSecret(): Buffer {
+  const secret = readSecret()
+  if (secret) return secret
+
+  // Fail loudly instead of silently accepting a weak or missing secret.
+  throw new Error(
+    `ENTITLEMENTS_SECRET must be set to a value of at least ${ENTITLEMENTS_SECRET_MIN_LENGTH} characters`
+  )
+}
+
+export function entitlementsConfigured(): boolean {
+  return readSecret() !== null
 }
 
 function base64urlEncode(data: Buffer): string {
@@ -36,8 +46,8 @@ function base64urlDecode(value: string): Buffer {
   return Buffer.from(padded + pad, 'base64')
 }
 
-function sign(payload: string): string {
-  return base64urlEncode(createHmac('sha256', getSecret()).update(payload).digest())
+function sign(payload: string, secret: Buffer): string {
+  return base64urlEncode(createHmac('sha256', secret).update(payload).digest())
 }
 
 export interface MintOptions {
@@ -50,6 +60,7 @@ export function mintEntitlementToken({ tiers, ttlSeconds, sessionId }: MintOptio
   token: string
   expiresAt: number
 } {
+  const secret = requireSecret()
   const iat = Math.floor(Date.now() / 1000)
   const exp = iat + (ttlSeconds ?? DEFAULT_TTL_SECONDS)
   const payload: EntitlementPayload = {
@@ -59,7 +70,7 @@ export function mintEntitlementToken({ tiers, ttlSeconds, sessionId }: MintOptio
     exp,
   }
   const encoded = base64urlEncode(Buffer.from(JSON.stringify(payload), 'utf8'))
-  const signature = sign(encoded)
+  const signature = sign(encoded, secret)
   return { token: `${encoded}.${signature}`, expiresAt: exp }
 }
 
@@ -92,8 +103,11 @@ export function verifyEntitlementToken(
   const parts = token.split('.')
   if (parts.length !== 2) return { valid: false, reason: 'malformed_token' }
 
+  const secret = readSecret()
+  if (!secret) return { valid: false, reason: 'secret_unconfigured' }
+
   const [encoded, signature] = parts
-  const expected = sign(encoded)
+  const expected = sign(encoded, secret)
   const expectedBuf = Buffer.from(expected, 'utf8')
   const providedBuf = Buffer.from(signature, 'utf8')
   if (expectedBuf.length !== providedBuf.length || !timingSafeEqual(expectedBuf, providedBuf)) {

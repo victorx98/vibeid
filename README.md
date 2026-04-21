@@ -23,7 +23,7 @@ Chinese-language AI resume review funnel for MentorX / Vibe ID. The current app 
 npm ci
 ```
 
-2. Copy the environment template and fill in `ANTHROPIC_API_KEY`:
+2. Copy the environment template and fill in `ANTHROPIC_API_KEY`. If you want to test signed unlock flows locally, also set `ENTITLEMENTS_SECRET` to a random 32+ character value:
 
 ```bash
 cp .env.example .env.local
@@ -43,12 +43,16 @@ npm run dev
 
 ## Hardening Flags
 
+- `ENTITLEMENTS_SECRET=<32+ chars>`
+  Required to mint and verify signed entitlement cookies for the demo checkout flow and the paid resume optimization API.
+- `BILLING_KILL_SWITCH=false`
+  Returns `503` from checkout endpoints and prevents new entitlement minting when toggled on.
 - `NEXT_PUBLIC_DEMO_UNLOCKS_ENABLED=false`
-  Keeps the old fake payment unlock flow disabled outside local demo environments.
+  Keeps the old fake payment unlock flow disabled unless you opt into local demo mode.
 - `NEXT_PUBLIC_ENABLE_VIBE_SAMPLE=false`
-  Keeps the static `public/vibe-id-sample` preview blocked outside local demo environments.
+  Keeps the static `public/vibe-id-sample` preview blocked unless you opt into local demo mode.
 
-Both flags default to enabled in development and disabled in production when unset.
+The boolean flags above default to `false` when unset.
 
 ## Verification
 

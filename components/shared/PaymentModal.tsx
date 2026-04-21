@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, CheckCircle } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -32,6 +32,8 @@ export default function PaymentModal({
   const [stage, setStage] = useState<Stage>('pay')
   const [error, setError] = useState<string | null>(null)
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const requestAbortRef = useRef<AbortController | null>(null)
+  const requestEpochRef = useRef(0)
 
   const clearSuccessTimer = useCallback(() => {
     if (successTimerRef.current) {
@@ -40,41 +42,86 @@ export default function PaymentModal({
     }
   }, [])
 
+  const clearPendingRequest = useCallback(() => {
+    if (requestAbortRef.current) {
+      requestAbortRef.current.abort()
+      requestAbortRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!open) {
+      requestEpochRef.current += 1
+      clearSuccessTimer()
+      clearPendingRequest()
+      setStage('pay')
+      setError(null)
+    }
+  }, [clearPendingRequest, clearSuccessTimer, open])
+
+  useEffect(() => {
+    return () => {
+      requestEpochRef.current += 1
+      clearSuccessTimer()
+      clearPendingRequest()
+    }
+  }, [clearPendingRequest, clearSuccessTimer])
+
   async function handlePay() {
+    requestEpochRef.current += 1
+    const requestEpoch = requestEpochRef.current
+    clearSuccessTimer()
+    clearPendingRequest()
     setError(null)
     setStage('loading')
+
+    const controller = new AbortController()
+    requestAbortRef.current = controller
+
     try {
       const res = await fetch('/api/checkout/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ productTier }),
+        signal: controller.signal,
       })
+      if (requestEpochRef.current !== requestEpoch) return
+      requestAbortRef.current = null
       if (!res.ok) {
         const message = await getApiErrorMessage(res, '支付确认失败，请稍后重试')
+        if (requestEpochRef.current !== requestEpoch) return
         throw new Error(message)
       }
       setStage('success')
       clearSuccessTimer()
       successTimerRef.current = setTimeout(() => {
+        if (requestEpochRef.current !== requestEpoch) return
         setStage('pay')
         onSuccess()
       }, 1000)
     } catch (err) {
+      if (requestEpochRef.current !== requestEpoch) return
+      requestAbortRef.current = null
+      if (err instanceof Error && err.name === 'AbortError') return
       setStage('pay')
       setError(err instanceof Error ? err.message : '支付确认失败，请稍后重试')
     }
   }
 
   function handleClose() {
+    requestEpochRef.current += 1
     clearSuccessTimer()
+    clearPendingRequest()
     setStage('pay')
     setError(null)
     onClose()
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!nextOpen) handleClose()
+    }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>

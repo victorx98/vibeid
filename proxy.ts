@@ -11,7 +11,7 @@ function isSameOrigin(requestOrigin: string, expectedOrigin: string): boolean {
   }
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname, origin } = request.nextUrl
 
   if (pathname.startsWith('/vibe-id-sample') && !publicVibeSampleEnabled) {

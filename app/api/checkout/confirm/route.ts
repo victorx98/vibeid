@@ -4,7 +4,9 @@ import { ZodError } from 'zod'
 import {
   ENTITLEMENT_COOKIE_NAME,
   EntitlementTier,
+  ENTITLEMENTS_SECRET_MIN_LENGTH,
   buildEntitlementCookieHeader,
+  entitlementsConfigured,
   mintEntitlementToken,
 } from '@/lib/entitlements'
 import { logError, logInfo, logWarn } from '@/lib/logger'
@@ -58,6 +60,17 @@ export async function POST(request: NextRequest) {
         { error: '支付系统尚未接入，暂无法完成购买' },
         baseHeaders
       )
+    }
+
+    if (!entitlementsConfigured()) {
+      logError(
+        'checkout_confirm_misconfigured',
+        new Error(
+          `ENTITLEMENTS_SECRET must be set to at least ${ENTITLEMENTS_SECRET_MIN_LENGTH} characters`
+        ),
+        { mode: 'demo', productTier }
+      )
+      return respond(503, { error: '支付系统配置错误，请稍后再试' }, baseHeaders)
     }
 
     const tiers = TIERS_FOR_PRODUCT[productTier]

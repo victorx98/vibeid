@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import {
-  mintEntitlementToken,
-  verifyEntitlementToken,
-} from './entitlements'
+import { mintEntitlementToken, verifyEntitlementToken } from './entitlements'
 
 // Each test needs a fresh secret; restore afterwards so other suites don't see it.
 const ORIGINAL_SECRET = process.env.ENTITLEMENTS_SECRET
@@ -53,7 +50,12 @@ describe('entitlement tokens', () => {
   })
 
   it('refuses to mint or verify without a strong secret', () => {
+    const { token } = mintEntitlementToken({ tiers: ['resume'] })
     delete process.env.ENTITLEMENTS_SECRET
     expect(() => mintEntitlementToken({ tiers: ['resume'] })).toThrow()
+    expect(verifyEntitlementToken(token, 'resume')).toEqual({
+      valid: false,
+      reason: 'secret_unconfigured',
+    })
   })
 })

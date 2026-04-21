@@ -35,6 +35,17 @@ export async function POST(request: NextRequest) {
     'resume'
   )
   if (!entitlementCheck.valid) {
+    if (entitlementCheck.reason === 'secret_unconfigured') {
+      logError(
+        'optimize_entitlement_misconfigured',
+        new Error('ENTITLEMENTS_SECRET is missing or too short')
+      )
+      return Response.json(
+        { error: '服务暂时不可用，请稍后重试' },
+        { status: 503, headers: createRateLimitHeaders(rateLimit) }
+      )
+    }
+
     logWarn('optimize_denied_no_entitlement', { reason: entitlementCheck.reason })
     return Response.json(
       { error: '请先完成购买再使用简历优化功能' },
