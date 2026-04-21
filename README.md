@@ -15,7 +15,12 @@ Chinese-language AI resume review funnel for MentorX / Vibe ID. The current app 
 - Anthropic Claude for analysis and optimization
 - Read-only SQLite mentor knowledge base at `data/resume_material_library.db`
 
-## Local Setup
+## Installation
+
+Requirements:
+
+- Node.js `20+`
+- npm
 
 1. Install dependencies:
 
@@ -23,16 +28,32 @@ Chinese-language AI resume review funnel for MentorX / Vibe ID. The current app 
 npm ci
 ```
 
-2. Copy the environment template and fill in `ANTHROPIC_API_KEY`. If you want to test signed unlock flows locally, also set `ENTITLEMENTS_SECRET` to a random 32+ character value:
+2. Copy the environment template:
 
 ```bash
 cp .env.example .env.local
 ```
 
-3. Start the app:
+3. Edit `.env.local` and set:
+
+- `ANTHROPIC_API_KEY`
+- `ENTITLEMENTS_SECRET` to a random 32+ character value if you want to test signed unlock flows locally
+
+## Launch
+
+Start the development server:
 
 ```bash
 npm run dev
+```
+
+Then open `http://localhost:3000`.
+
+To run the production build locally:
+
+```bash
+npm run build
+npm run start
 ```
 
 ## Upload Support
