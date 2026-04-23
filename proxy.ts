@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { createServerClient } from '@supabase/ssr'
 
+import { getEnv, supabaseBrowserConfigured } from '@/lib/backend-config'
 import { billingKillSwitchEnabled, publicVibeSampleEnabled } from '@/lib/runtime-config'
 
 function isSameOrigin(requestOrigin: string, expectedOrigin: string): boolean {
@@ -11,7 +13,34 @@ function isSameOrigin(requestOrigin: string, expectedOrigin: string): boolean {
   }
 }
 
-export function proxy(request: NextRequest) {
+async function refreshSupabaseSession(request: NextRequest): Promise<NextResponse> {
+  if (!supabaseBrowserConfigured()) return NextResponse.next()
+
+  let response = NextResponse.next({ request })
+  const supabase = createServerClient(
+    getEnv('NEXT_PUBLIC_SUPABASE_URL')!,
+    getEnv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
+          response = NextResponse.next({ request })
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response.cookies.set(name, value, options)
+          })
+        },
+      },
+    }
+  )
+
+  await supabase.auth.getUser()
+  return response
+}
+
+export async function proxy(request: NextRequest) {
   const { pathname, origin } = request.nextUrl
 
   if (pathname.startsWith('/vibe-id-sample') && !publicVibeSampleEnabled) {
@@ -32,11 +61,17 @@ export function proxy(request: NextRequest) {
         return NextResponse.json({ error: 'Forbidden origin' }, { status: 403 })
       }
     }
+
+    if (pathname === '/api/stripe/webhook') {
+      return NextResponse.next()
+    }
   }
 
-  return NextResponse.next()
+  return refreshSupabaseSession(request)
 }
 
 export const config = {
-  matcher: ['/api/:path*', '/vibe-id-sample/:path*'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
+  ],
 }

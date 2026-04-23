@@ -8,30 +8,32 @@ import MentorCard from '@/components/sales/MentorCard'
 import LockedMentorCard from '@/components/sales/LockedMentorCard'
 import PaymentModal from '@/components/shared/PaymentModal'
 import SkillGapAnalysis from '@/components/result/SkillGapAnalysis'
-import { getSession, updateSession } from '@/lib/session'
+import { artifactIdFromLocation, fetchArtifact, setCurrentArtifactId } from '@/lib/client-artifacts'
 import CustomerServiceButton from '@/components/shared/CustomerServiceButton'
-import { ResumeSession } from '@/lib/types'
+import { ResumeArtifactPayload } from '@/lib/types'
 
 export default function SalesPage() {
   const router = useRouter()
-  const [session, setSession] = useState<ResumeSession | null>(null)
+  const [session, setSession] = useState<ResumeArtifactPayload | null>(null)
   const [showPayment, setShowPayment] = useState(false)
 
   useEffect(() => {
-    const s = getSession()
-    if (!s) { router.push('/'); return }
-    const frame = window.requestAnimationFrame(() => {
-      setSession(s)
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [router])
+    const searchParams = new URLSearchParams(window.location.search)
+    const artifactId = artifactIdFromLocation(searchParams)
+    if (!artifactId) { router.push('/'); return }
+    setCurrentArtifactId(artifactId)
 
-  function handlePaymentSuccess() {
-    setShowPayment(false)
-    const updated = updateSession({ unlockedTiers: [...(session?.unlockedTiers || []), 'basic'] })
-    if (updated) setSession(updated)
-    router.push('/result')
-  }
+    let cancelled = false
+    fetchArtifact(artifactId)
+      .then(({ artifact }) => {
+        if (!cancelled) setSession(artifact)
+      })
+      .catch(() => {
+        if (!cancelled) router.push('/')
+      })
+
+    return () => { cancelled = true }
+  }, [router])
 
   if (!session) return null
 
@@ -169,11 +171,11 @@ export default function SalesPage() {
       <PaymentModal
         open={showPayment}
         onClose={() => setShowPayment(false)}
-        onSuccess={handlePaymentSuccess}
         title="解锁所有导师建议"
         price="¥39"
         description="查看 4 位大厂导师针对你简历的完整修改建议"
         productTier="basic"
+        artifactId={session.id}
       />
       <CustomerServiceButton />
     </main>

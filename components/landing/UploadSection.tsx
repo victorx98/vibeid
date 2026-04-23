@@ -4,8 +4,9 @@ import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Upload, FileText, X } from 'lucide-react'
 import { getApiErrorMessage } from '@/lib/client-api'
+import { setCurrentArtifactId, waitForJob } from '@/lib/client-artifacts'
 import { MAX_RESUME_UPLOAD_BYTES } from '@/lib/constants'
-import { setSession } from '@/lib/session'
+import { ensureSupabaseSession } from '@/lib/supabase/browser'
 import LoadingScreen from '@/components/shared/LoadingScreen'
 
 export default function UploadSection() {
@@ -16,6 +17,7 @@ export default function UploadSection() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [loadingStage, setLoadingStage] = useState<'parsing' | 'analyzing'>('parsing')
   const [analyzeCompleted, setAnalyzeCompleted] = useState(false)
+  const [completedArtifactId, setCompletedArtifactId] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState('')
 
@@ -59,33 +61,24 @@ export default function UploadSection() {
       if (!parseRes.ok) throw new Error(await getApiErrorMessage(parseRes, '简历解析失败'))
       const { text } = await parseRes.json()
 
-      // Step 2: Analyze
+      // Step 2: Persist artifact + enqueue analysis
       setLoadingStage('analyzing')
+      await ensureSupabaseSession()
       const analyzeRes = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resumeText: text, targetRole, jobDescription: jobDescription.trim() || undefined }),
+        credentials: 'include',
+        body: JSON.stringify({
+          resumeText: text,
+          targetRole: targetRole.trim(),
+          jobDescription: jobDescription.trim() || undefined,
+        }),
       })
       if (!analyzeRes.ok) throw new Error(await getApiErrorMessage(analyzeRes, '分析失败'))
-      const data = await analyzeRes.json()
-
-      // Save session
-      setSession({
-        id: crypto.randomUUID(),
-        resumeText: text,
-        targetRole,
-        jobDescription: jobDescription.trim() || undefined,
-        atsScore: data.atsScore,
-        atsResult: data.atsResult,
-        overallJudgment: data.overallJudgment,
-        currentSalary: data.currentSalary,
-        topSalary: data.topSalary,
-        topCompanies: data.topCompanies,
-        competition: data.competition,
-        mentorAdvice: data.mentorAdvice,
-        unlockedTiers: [],
-        createdAt: new Date().toISOString(),
-      })
+      const { jobId, artifactId } = await analyzeRes.json()
+      setCurrentArtifactId(artifactId)
+      setCompletedArtifactId(artifactId)
+      await waitForJob(jobId)
 
       // Animate bar to 100%, then navigate via onCompleted callback
       setAnalyzeCompleted(true)
@@ -99,7 +92,7 @@ export default function UploadSection() {
     <LoadingScreen
       stage={loadingStage}
       completed={analyzeCompleted}
-      onCompleted={() => router.push('/sales')}
+      onCompleted={() => router.push(`/sales?artifactId=${completedArtifactId}`)}
     />
   )
 

@@ -8,9 +8,9 @@ import OptimizedResume from '@/components/upsale/OptimizedResume'
 import ATSOptimization from '@/components/upsale/ATSOptimization'
 import SkillGapCTA from '@/components/upsale/SkillGapCTA'
 import UpsaleServices from '@/components/upsale/UpsaleServices'
-import { getSession } from '@/lib/session'
+import { artifactIdFromLocation, fetchArtifact, setCurrentArtifactId } from '@/lib/client-artifacts'
 import CustomerServiceButton from '@/components/shared/CustomerServiceButton'
-import { ResumeSession } from '@/lib/types'
+import { ResumeArtifactPayload } from '@/lib/types'
 
 function ATSCelebration({ beforeScore, afterScore }: { beforeScore: number; afterScore: number }) {
   const [displayScore, setDisplayScore] = useState(beforeScore)
@@ -145,15 +145,29 @@ function QuickFeedback() {
 
 export default function UpsalePage() {
   const router = useRouter()
-  const [session, setSession] = useState<ResumeSession | null>(null)
+  const [session, setSession] = useState<ResumeArtifactPayload | null>(null)
 
   useEffect(() => {
-    const s = getSession()
-    if (!s || !s.unlockedTiers.includes('resume')) { router.push('/'); return }
-    const frame = window.requestAnimationFrame(() => {
-      setSession(s)
-    })
-    return () => window.cancelAnimationFrame(frame)
+    const searchParams = new URLSearchParams(window.location.search)
+    const artifactId = artifactIdFromLocation(searchParams)
+    if (!artifactId) { router.push('/'); return }
+    setCurrentArtifactId(artifactId)
+
+    let cancelled = false
+    fetchArtifact(artifactId, 'resume')
+      .then(({ artifact }) => {
+        if (cancelled) return
+        if (!artifact.optimizedResume) {
+          router.push(`/result?artifactId=${artifactId}`)
+          return
+        }
+        setSession(artifact)
+      })
+      .catch(() => {
+        if (!cancelled) router.push(`/result?artifactId=${artifactId}`)
+      })
+
+    return () => { cancelled = true }
   }, [router])
 
   if (!session) return null

@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useMemo, useState } from 'react'
 import { Download, Globe, Eye, EyeOff, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { getCurrentArtifactId } from '@/lib/client-artifacts'
 
 // ── Teal-style resume color ────────────────────────────────────────
 const TEAL = '#0D9488'
@@ -585,7 +586,10 @@ export default function OptimizedResume({ content }: { content: string }) {
       {/* Vibe ID CTA */}
       <div className="px-6 pb-6">
         <button
-          onClick={() => router.push('/vibe-id')}
+          onClick={() => {
+            const artifactId = getCurrentArtifactId()
+            router.push(artifactId ? `/vibe-id?artifactId=${artifactId}` : '/vibe-id')
+          }}
           className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-sm transition-all"
           style={{ backgroundColor: '#C6E04B', color: '#0E2620', border: '2px solid #C6E04B' }}
         >

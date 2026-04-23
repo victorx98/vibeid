@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, CheckCircle } from 'lucide-react'
+import { AlertCircle } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { getApiErrorMessage } from '@/lib/client-api'
@@ -11,36 +11,28 @@ type ProductTier = 'basic' | 'resume'
 interface PaymentModalProps {
   open: boolean
   onClose: () => void
-  onSuccess: () => void
   title: string
   price: string
   description: string
   productTier: ProductTier
+  artifactId: string
 }
 
-type Stage = 'pay' | 'loading' | 'success'
+type Stage = 'pay' | 'loading'
 
 export default function PaymentModal({
   open,
   onClose,
-  onSuccess,
   title,
   price,
   description,
   productTier,
+  artifactId,
 }: PaymentModalProps) {
   const [stage, setStage] = useState<Stage>('pay')
   const [error, setError] = useState<string | null>(null)
-  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const requestAbortRef = useRef<AbortController | null>(null)
   const requestEpochRef = useRef(0)
-
-  const clearSuccessTimer = useCallback(() => {
-    if (successTimerRef.current) {
-      clearTimeout(successTimerRef.current)
-      successTimerRef.current = null
-    }
-  }, [])
 
   const clearPendingRequest = useCallback(() => {
     if (requestAbortRef.current) {
@@ -52,25 +44,22 @@ export default function PaymentModal({
   useEffect(() => {
     if (!open) {
       requestEpochRef.current += 1
-      clearSuccessTimer()
       clearPendingRequest()
       setStage('pay')
       setError(null)
     }
-  }, [clearPendingRequest, clearSuccessTimer, open])
+  }, [clearPendingRequest, open])
 
   useEffect(() => {
     return () => {
       requestEpochRef.current += 1
-      clearSuccessTimer()
       clearPendingRequest()
     }
-  }, [clearPendingRequest, clearSuccessTimer])
+  }, [clearPendingRequest])
 
   async function handlePay() {
     requestEpochRef.current += 1
     const requestEpoch = requestEpochRef.current
-    clearSuccessTimer()
     clearPendingRequest()
     setError(null)
     setStage('loading')
@@ -79,11 +68,11 @@ export default function PaymentModal({
     requestAbortRef.current = controller
 
     try {
-      const res = await fetch('/api/checkout/confirm', {
+      const res = await fetch('/api/checkout/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ productTier }),
+        body: JSON.stringify({ productTier, artifactId }),
         signal: controller.signal,
       })
       if (requestEpochRef.current !== requestEpoch) return
@@ -93,13 +82,11 @@ export default function PaymentModal({
         if (requestEpochRef.current !== requestEpoch) return
         throw new Error(message)
       }
-      setStage('success')
-      clearSuccessTimer()
-      successTimerRef.current = setTimeout(() => {
-        if (requestEpochRef.current !== requestEpoch) return
-        setStage('pay')
-        onSuccess()
-      }, 1000)
+      const { url } = await res.json()
+      if (typeof url !== 'string' || !url) {
+        throw new Error('支付订单创建失败，请稍后重试')
+      }
+      window.location.assign(url)
     } catch (err) {
       if (requestEpochRef.current !== requestEpoch) return
       requestAbortRef.current = null
@@ -111,7 +98,6 @@ export default function PaymentModal({
 
   function handleClose() {
     requestEpochRef.current += 1
-    clearSuccessTimer()
     clearPendingRequest()
     setStage('pay')
     setError(null)
@@ -143,11 +129,8 @@ export default function PaymentModal({
             )}
 
             <div className="flex gap-3">
-              <Button onClick={handlePay} className="flex-1 bg-green-500 hover:bg-green-600 text-white">
-                <span className="mr-2">💬</span>微信支付
-              </Button>
               <Button onClick={handlePay} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white">
-                <span className="mr-2">🔷</span>支付宝
+                前往安全支付
               </Button>
             </div>
           </div>
@@ -157,13 +140,6 @@ export default function PaymentModal({
           <div className="flex flex-col items-center py-8 gap-4">
             <div className="w-10 h-10 border-4 rounded-full animate-spin" style={{ borderColor: '#d1e7d9', borderTopColor: '#2A6041' }} />
             <p className="text-gray-500">支付处理中...</p>
-          </div>
-        )}
-
-        {stage === 'success' && (
-          <div className="flex flex-col items-center py-8 gap-4">
-            <CheckCircle className="w-16 h-16 text-green-500" />
-            <p className="text-lg font-semibold text-green-600">支付成功!</p>
           </div>
         )}
       </DialogContent>

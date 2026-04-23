@@ -8,6 +8,15 @@ export type EntitlementTier = 'basic' | 'resume'
 export const ENTITLEMENT_COOKIE_NAME = 'vibeid_entitlement'
 export const ENTITLEMENTS_SECRET_MIN_LENGTH = 32
 const DEFAULT_TTL_SECONDS = 24 * 60 * 60
+const PLACEHOLDER_SECRETS = new Set([
+  'replace-with-at-least-32-characters',
+  'replace-with-a-random-32-character-secret',
+  'change-me',
+  'changeme',
+  'your-secret-here',
+  'your-secret-key',
+  'secret',
+])
 
 interface EntitlementPayload {
   sid: string
@@ -17,8 +26,10 @@ interface EntitlementPayload {
 }
 
 function readSecret(): Buffer | null {
-  const secret = process.env.ENTITLEMENTS_SECRET
+  const secret = process.env.ENTITLEMENTS_SECRET?.trim()
   if (!secret || secret.length < ENTITLEMENTS_SECRET_MIN_LENGTH) return null
+  if (PLACEHOLDER_SECRETS.has(secret.toLowerCase())) return null
+  if (/^(x+|0+|1+|test|password)$/i.test(secret)) return null
   return Buffer.from(secret, 'utf8')
 }
 

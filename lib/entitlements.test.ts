@@ -58,4 +58,13 @@ describe('entitlement tokens', () => {
       reason: 'secret_unconfigured',
     })
   })
+
+  it('refuses known placeholder secrets', () => {
+    process.env.ENTITLEMENTS_SECRET = 'replace-with-at-least-32-characters'
+    expect(() => mintEntitlementToken({ tiers: ['resume'] })).toThrow()
+    expect(verifyEntitlementToken('not.a-real-token', 'resume')).toEqual({
+      valid: false,
+      reason: 'secret_unconfigured',
+    })
+  })
 })

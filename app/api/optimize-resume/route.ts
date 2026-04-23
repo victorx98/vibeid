@@ -6,6 +6,14 @@ import {
   readEntitlementCookie,
   verifyEntitlementToken,
 } from '@/lib/entitlements'
+import {
+  createOptimizeJob,
+  failJob,
+  getArtifactForUser,
+  hasActiveEntitlement,
+} from '@/lib/backend-store'
+import { databaseConfigured } from '@/lib/db'
+import { enqueueAiJob } from '@/lib/job-queue'
 import { logError, logWarn } from '@/lib/logger'
 import { USER_CONTENT_GUARDRAIL, toPromptBlock } from '@/lib/prompting'
 import {
@@ -13,50 +21,22 @@ import {
   checkRateLimit,
   createRateLimitHeaders,
 } from '@/lib/rate-limit'
-import { optimizeResumeRequestSchema } from '@/lib/validation'
+import { getAuthenticatedUser } from '@/lib/supabase/server'
+import {
+  optimizeResumeJobRequestSchema,
+  type OptimizeResumeRequest,
+} from '@/lib/validation'
 import { MentorAdviceItem } from '@/lib/types'
 
 export const runtime = 'nodejs'
 
-export async function POST(request: NextRequest) {
-  const rateLimit = checkRateLimit(request, RATE_LIMITS.optimize)
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: '请求过于频繁，请稍后再试' },
-      { status: 429, headers: createRateLimitHeaders(rateLimit) }
-    )
-  }
-
-  // Paywall enforcement: the optimized resume is the paid product, so the
-  // caller must present a signed entitlement cookie granting the `resume`
-  // tier. Without this, a direct POST bypasses the client-side paywall.
-  const entitlementCheck = verifyEntitlementToken(
-    readEntitlementCookie(request),
-    'resume'
-  )
-  if (!entitlementCheck.valid) {
-    if (entitlementCheck.reason === 'secret_unconfigured') {
-      logError(
-        'optimize_entitlement_misconfigured',
-        new Error('ENTITLEMENTS_SECRET is missing or too short')
-      )
-      return Response.json(
-        { error: '服务暂时不可用，请稍后重试' },
-        { status: 503, headers: createRateLimitHeaders(rateLimit) }
-      )
-    }
-
-    logWarn('optimize_denied_no_entitlement', { reason: entitlementCheck.reason })
-    return Response.json(
-      { error: '请先完成购买再使用简历优化功能' },
-      { status: 402, headers: createRateLimitHeaders(rateLimit) }
-    )
-  }
-
-  try {
-    const rawBody = await request.json()
-    const { resumeText, targetRole, jobDescription, mentorAdvice, adviceFeedback } =
-      optimizeResumeRequestSchema.parse(rawBody)
+export async function runResumeOptimization({
+  resumeText,
+  targetRole,
+  jobDescription,
+  mentorAdvice,
+  adviceFeedback,
+}: OptimizeResumeRequest): Promise<{ optimizedResume: string }> {
 
     const escapeRegExp = (value: string) =>
       value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -347,22 +327,99 @@ ${USER_CONTENT_GUARDRAIL}`,
       .replace(/\n?```\s*$/gm, '')
       .trim()
 
+    return { optimizedResume }
+}
+
+export async function POST(request: NextRequest) {
+  const rateLimit = checkRateLimit(request, RATE_LIMITS.optimize)
+  const headers = createRateLimitHeaders(rateLimit)
+
+  if (!rateLimit.allowed) {
     return Response.json(
-      { optimizedResume },
-      { headers: createRateLimitHeaders(rateLimit) }
+      { error: '请求过于频繁，请稍后再试' },
+      { status: 429, headers }
     )
+  }
+
+  const auth = await getAuthenticatedUser(request)
+  if (auth.error === 'not_configured') {
+    return Response.json(
+      { error: '登录系统未配置，暂时无法使用简历优化功能' },
+      { status: 503, headers }
+    )
+  }
+  if (auth.error || !auth.user) {
+    return Response.json(
+      { error: '请先登录后再使用简历优化功能' },
+      { status: 401, headers }
+    )
+  }
+
+  if (!databaseConfigured()) {
+    return Response.json(
+      { error: '优化系统未配置，请稍后再试' },
+      { status: 503, headers }
+    )
+  }
+
+  try {
+    const rawBody = await request.json()
+    const { artifactId, adviceFeedback } = optimizeResumeJobRequestSchema.parse(rawBody)
+    const artifact = await getArtifactForUser(auth.user.id, artifactId)
+    if (!artifact) {
+      return Response.json(
+        { error: '未找到对应的简历分析记录' },
+        { status: 404, headers }
+      )
+    }
+
+    const hasResumeEntitlement = await hasActiveEntitlement(auth.user.id, 'resume')
+    const legacyEntitlement = verifyEntitlementToken(
+      readEntitlementCookie(request),
+      'resume'
+    )
+
+    if (!hasResumeEntitlement && !legacyEntitlement.valid) {
+      if (legacyEntitlement.reason === 'secret_unconfigured') {
+        logWarn('legacy_entitlement_unconfigured')
+      }
+      logWarn('optimize_denied_no_entitlement', {
+        reason: legacyEntitlement.valid ? 'none' : legacyEntitlement.reason,
+      })
+      return Response.json(
+        { error: '请先完成购买再使用简历优化功能' },
+        { status: 402, headers }
+      )
+    }
+
+    const jobId = await createOptimizeJob(auth.user.id, artifactId, {
+      artifactId,
+      adviceFeedback,
+    })
+    try {
+      await enqueueAiJob('optimize', jobId)
+    } catch (error) {
+      await failJob(jobId, 'enqueue_failed', '优化任务入队失败')
+      logError('optimize_enqueue_failed', error, { jobId, artifactId })
+      return Response.json(
+        { error: '优化任务创建失败，请稍后再试' },
+        { status: 503, headers }
+      )
+    }
+
+    return Response.json({ jobId }, { status: 202, headers })
   } catch (error) {
     if (error instanceof ZodError) {
       return Response.json(
         { error: '请求参数不合法，请刷新页面后重试' },
-        { status: 400, headers: createRateLimitHeaders(rateLimit) }
+        { status: 400, headers }
       )
     }
 
     logError('resume_optimization_failed', error)
     return Response.json(
       { error: '简历优化失败，请稍后重试' },
-      { status: 500, headers: createRateLimitHeaders(rateLimit) }
+      { status: 500, headers }
     )
   }
 }

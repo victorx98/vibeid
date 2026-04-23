@@ -1,6 +1,14 @@
 import type { NextConfig } from 'next'
 
 const isDev = process.env.NODE_ENV !== 'production'
+let supabaseOrigin: string | null = null
+try {
+  supabaseOrigin = process.env.NEXT_PUBLIC_SUPABASE_URL
+    ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).origin
+    : null
+} catch {
+  supabaseOrigin = null
+}
 
 const contentSecurityPolicy = [
   "default-src 'self'",
@@ -8,7 +16,7 @@ const contentSecurityPolicy = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://logo.clearbit.com",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  `connect-src 'self'${supabaseOrigin ? ` ${supabaseOrigin}` : ''}`,
   "frame-src 'self'",
   "frame-ancestors 'self'",
   "object-src 'none'",
@@ -66,7 +74,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  serverExternalPackages: ['better-sqlite3'],
+  serverExternalPackages: ['better-sqlite3', 'pg', 'pg-boss'],
   async headers() {
     return [
       {

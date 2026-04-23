@@ -6,9 +6,9 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Copy, Check, AlertCircle, CheckCircle, ExternalLink, ArrowLeft, X, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import CustomerServiceButton from '@/components/shared/CustomerServiceButton'
-import { getSession } from '@/lib/session'
+import { artifactIdFromLocation, fetchArtifact, setCurrentArtifactId } from '@/lib/client-artifacts'
 import { publicVibeSampleEnabled } from '@/lib/runtime-config'
-import { ResumeSession } from '@/lib/types'
+import { ResumeArtifactPayload } from '@/lib/types'
 import {
   getEnrichedSkills, getMissingSkills, calcMatchPct,
   PROJECT_SKILL_COVERAGE, EnrichedSkill,
@@ -115,17 +115,26 @@ const aiProjects: AIProject[] = [
 
 export default function VibeIdPage() {
   const router = useRouter()
-  const [session, setSession] = useState<ResumeSession | null>(null)
+  const [session, setSession] = useState<ResumeArtifactPayload | null>(null)
   const [copied, setCopied]             = useState(false)
   const [showCompletion, setShowCompletion] = useState(false)
 
   useEffect(() => {
-    const s = getSession()
-    if (!s || !s.unlockedTiers.includes('resume')) { router.push('/'); return }
-    const frame = window.requestAnimationFrame(() => {
-      setSession(s)
-    })
-    return () => window.cancelAnimationFrame(frame)
+    const searchParams = new URLSearchParams(window.location.search)
+    const artifactId = artifactIdFromLocation(searchParams)
+    if (!artifactId) { router.push('/'); return }
+    setCurrentArtifactId(artifactId)
+
+    let cancelled = false
+    fetchArtifact(artifactId, 'resume')
+      .then(({ artifact }) => {
+        if (!cancelled) setSession(artifact)
+      })
+      .catch(() => {
+        if (!cancelled) router.push(`/result?artifactId=${artifactId}`)
+      })
+
+    return () => { cancelled = true }
   }, [router])
 
   // Compute missing skills from session
@@ -177,7 +186,7 @@ export default function VibeIdPage() {
         <div className="max-w-6xl mx-auto flex items-center justify-between w-full">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => router.push('/upsale')}
+              onClick={() => router.push(`/upsale?artifactId=${session?.id}`)}
               className="flex items-center gap-1 text-sm hover:opacity-70 transition-opacity"
               style={{ color: '#6B7280' }}
             >

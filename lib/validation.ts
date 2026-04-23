@@ -75,6 +75,11 @@ export const optimizeResumeRequestSchema = z.object({
   adviceFeedback: adviceFeedbackSchema.optional(),
 })
 
+export const optimizeResumeJobRequestSchema = z.object({
+  artifactId: z.string().uuid(),
+  adviceFeedback: adviceFeedbackSchema.optional(),
+})
+
 export const previewOptimizeRequestSchema = z.object({
   bullet: requiredTrimmedString(5, MAX_BULLET_CHARS),
   targetRole: requiredTrimmedString(2, MAX_TARGET_ROLE_CHARS),
@@ -84,10 +89,17 @@ export const checkoutConfirmRequestSchema = z.object({
   productTier: z.enum(['basic', 'resume']),
 })
 
+export const checkoutSessionRequestSchema = z.object({
+  productTier: z.enum(['basic', 'resume']),
+  artifactId: z.string().uuid(),
+})
+
 export type AnalyzeRequest = z.infer<typeof analyzeRequestSchema>
 export type OptimizeResumeRequest = z.infer<typeof optimizeResumeRequestSchema>
+export type OptimizeResumeJobRequest = z.infer<typeof optimizeResumeJobRequestSchema>
 export type PreviewOptimizeRequest = z.infer<typeof previewOptimizeRequestSchema>
 export type CheckoutConfirmRequest = z.infer<typeof checkoutConfirmRequestSchema>
+export type CheckoutSessionRequest = z.infer<typeof checkoutSessionRequestSchema>
 
 export function getResumeUploadKind(fileName: string): ResumeUploadKind | null {
   const lowerName = fileName.toLowerCase()

@@ -3,6 +3,7 @@
 import { useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
+import { getCurrentArtifactId } from '@/lib/client-artifacts'
 import { getEnrichedSkills, getMissingSkills } from '@/lib/skillGap'
 
 interface Props {
@@ -82,7 +83,10 @@ export default function SkillGapCTA({ targetRole, resumeText, jobDescription }: 
             </p>
           </div>
           <button
-            onClick={() => router.push('/vibe-id')}
+            onClick={() => {
+              const artifactId = getCurrentArtifactId()
+              router.push(artifactId ? `/vibe-id?artifactId=${artifactId}` : '/vibe-id')
+            }}
             className="flex-shrink-0 text-sm font-bold px-5 py-2.5 rounded-xl transition-opacity hover:opacity-90"
             style={{ backgroundColor: '#C6E04B', color: '#0E2620' }}
           >

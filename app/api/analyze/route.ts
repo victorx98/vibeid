@@ -6,13 +6,18 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import fs from 'fs'
 import { logError } from '@/lib/logger'
+import { createAnalyzeArtifactAndJob, failJob } from '@/lib/backend-store'
+import { databaseConfigured } from '@/lib/db'
+import { enqueueAiJob } from '@/lib/job-queue'
 import { USER_CONTENT_GUARDRAIL, toPromptBlock, toPromptLine } from '@/lib/prompting'
 import {
   RATE_LIMITS,
   checkRateLimit,
   createRateLimitHeaders,
 } from '@/lib/rate-limit'
-import { analyzeRequestSchema } from '@/lib/validation'
+import { getAuthenticatedUser } from '@/lib/supabase/server'
+import { analyzeRequestSchema, type AnalyzeRequest } from '@/lib/validation'
+import type { AnalyzeResultPayload } from '@/lib/types'
 
 export const runtime = 'nodejs'
 
@@ -188,22 +193,14 @@ interface BeforeAfterRow {
   mentor_name: string; company: string
 }
 
-export async function POST(request: NextRequest) {
-  const rateLimit = checkRateLimit(request, RATE_LIMITS.analyze)
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: '请求过于频繁，请稍后再试' },
-      { status: 429, headers: createRateLimitHeaders(rateLimit) }
-    )
+export async function runResumeAnalysis({
+  resumeText,
+  targetRole,
+  jobDescription,
+}: AnalyzeRequest): Promise<AnalyzeResultPayload> {
+  if (!fs.existsSync(DB_PATH)) {
+    throw new Error(`Mentor knowledge base missing at ${DB_PATH}`)
   }
-
-  try {
-    const rawBody = await request.json()
-    const { resumeText, targetRole, jobDescription } = analyzeRequestSchema.parse(rawBody)
-
-    if (!fs.existsSync(DB_PATH)) {
-      throw new Error(`Mentor knowledge base missing at ${DB_PATH}`)
-    }
 
     const jdSection = jobDescription
       ? `\n\nJob Description (use this to extract keywords and match against resume):\n${toPromptBlock('job_description', jobDescription, 3000)}`
@@ -617,52 +614,102 @@ ${lockedMentorList.map((m, i) => fmtMentor(m, i + 2)).join('\n\n')}
 
     // ── Combine into final mentorResult ──────────────────────────────────────
     const mentorResult = {
-      overallJudgment: unlockedResult?.overallJudgment || { strengths: '', coreIssues: '', mentorCount: 4 },
+      overallJudgment: (unlockedResult?.overallJudgment as AnalyzeResultPayload['overallJudgment']) || { strengths: '', coreIssues: '', mentorCount: 4 },
       currentSalary: unlockedResult?.currentSalary || '未知',
       topSalary: unlockedResult?.topSalary || '未知',
       topCompanies: unlockedResult?.topCompanies || [],
       mentorAdvice: [
         ...(unlockedResult?.mentor ? [{ ...unlockedResult.mentor, isLocked: false }] : []),
         ...(lockedResult?.lockedMentors || []).map(m => ({ ...m, isLocked: true })),
-      ],
+      ] as AnalyzeResultPayload['mentorAdvice'],
     }
 
     // ══════════════════════════════════════════
     // STEP 5: Return combined result
     // ══════════════════════════════════════════
+    return {
+      atsScore: safeATS.final_score,
+      atsResult,
+      overallJudgment: mentorResult.overallJudgment,
+      currentSalary: mentorResult.currentSalary,
+      topSalary: mentorResult.topSalary,
+      topCompanies: mentorResult.topCompanies,
+      competition:
+        competitionResult || {
+          job_title: targetRole,
+          base_role: 1000,
+          base_role_reasoning: '',
+          estimated_applicants: 1000,
+          applicant_range: '500-1500',
+          competition_tag: '中等竞争',
+        },
+      mentorAdvice: mentorResult.mentorAdvice,
+    }
+}
+
+export async function POST(request: NextRequest) {
+  const rateLimit = checkRateLimit(request, RATE_LIMITS.analyze)
+  const headers = createRateLimitHeaders(rateLimit)
+
+  if (!rateLimit.allowed) {
     return Response.json(
-      {
-        atsScore: safeATS.final_score,
-        atsResult,
-        overallJudgment: mentorResult.overallJudgment,
-        currentSalary: mentorResult.currentSalary,
-        topSalary: mentorResult.topSalary,
-        topCompanies: mentorResult.topCompanies,
-        competition:
-          competitionResult || {
-            job_title: targetRole,
-            base_role: 1000,
-            base_role_reasoning: '',
-            estimated_applicants: 1000,
-            applicant_range: '500-1500',
-            competition_tag: '中等竞争',
-          },
-        mentorAdvice: mentorResult.mentorAdvice,
-      },
-      { headers: createRateLimitHeaders(rateLimit) }
+      { error: '请求过于频繁，请稍后再试' },
+      { status: 429, headers }
+    )
+  }
+
+  const auth = await getAuthenticatedUser(request)
+  if (auth.error === 'not_configured') {
+    return Response.json(
+      { error: '登录系统未配置，暂时无法保存分析结果' },
+      { status: 503, headers }
+    )
+  }
+  if (auth.error || !auth.user) {
+    return Response.json(
+      { error: '请先登录后再分析简历' },
+      { status: 401, headers }
+    )
+  }
+
+  if (!databaseConfigured()) {
+    return Response.json(
+      { error: '分析系统未配置，请稍后再试' },
+      { status: 503, headers }
+    )
+  }
+
+  try {
+    const rawBody = await request.json()
+    const input = analyzeRequestSchema.parse(rawBody)
+    const { artifactId, jobId } = await createAnalyzeArtifactAndJob(auth.user.id, input)
+    try {
+      await enqueueAiJob('analyze', jobId)
+    } catch (error) {
+      await failJob(jobId, 'enqueue_failed', '分析任务入队失败')
+      logError('analyze_enqueue_failed', error, { jobId, artifactId })
+      return Response.json(
+        { error: '分析任务创建失败，请稍后再试' },
+        { status: 503, headers }
+      )
+    }
+
+    return Response.json(
+      { jobId, artifactId },
+      { status: 202, headers }
     )
   } catch (error) {
     if (error instanceof ZodError) {
       return Response.json(
         { error: '请求参数不合法，请检查简历文本和目标岗位后重试' },
-        { status: 400, headers: createRateLimitHeaders(rateLimit) }
+        { status: 400, headers }
       )
     }
 
     logError('resume_analysis_failed', error)
     return Response.json(
       { error: '简历分析失败，请稍后重试' },
-      { status: 500, headers: createRateLimitHeaders(rateLimit) }
+      { status: 500, headers }
     )
   }
 }

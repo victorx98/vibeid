@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Button } from '@/components/ui/button'
@@ -9,9 +9,15 @@ import LockedFeatures from '@/components/result/LockedFeatures'
 import PaymentModal from '@/components/shared/PaymentModal'
 import LoadingScreen from '@/components/shared/LoadingScreen'
 import { getApiErrorMessage } from '@/lib/client-api'
-import { getSession, updateSession } from '@/lib/session'
+import {
+  artifactIdFromLocation,
+  fetchArtifact,
+  setCurrentArtifactId,
+  waitForJob,
+} from '@/lib/client-artifacts'
 import CustomerServiceButton from '@/components/shared/CustomerServiceButton'
-import { ResumeSession, AdviceFeedback, ATSResult } from '@/lib/types'
+import { ResumeArtifactPayload, AdviceFeedback, ATSResult } from '@/lib/types'
+import type { ProductTier } from '@/lib/product-tiers'
 
 // Common format issues Chinese students face — static knowledge base
 const FORMAT_CHECKS: { id: string; label: string; keywords: string[]; penalty: string }[] = [
@@ -93,22 +99,52 @@ function FormatComplianceAlert({ atsResult, onUnlock }: { atsResult: ATSResult; 
 
 export default function ResultPage() {
   const router = useRouter()
-  const [session, setSessionState] = useState<ResumeSession | null>(null)
+  const [session, setSessionState] = useState<ResumeArtifactPayload | null>(null)
+  const [entitlements, setEntitlements] = useState<ProductTier[]>([])
+  const [checkoutSuccess, setCheckoutSuccess] = useState(false)
   const [showPayment, setShowPayment] = useState(false)
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [optimizeStage, setOptimizeStage] = useState<'optimizing-1' | 'optimizing-2'>('optimizing-1')
   const [optimizeCompleted, setOptimizeCompleted] = useState(false)
   const [showBanner, setShowBanner] = useState(false)
   const [feedbackMap, setFeedbackMap] = useState<Record<string, AdviceFeedback>>({})
+  const autoOptimizeStartedRef = useRef(false)
 
   useEffect(() => {
-    const s = getSession()
-    if (!s || !s.unlockedTiers.includes('basic')) { router.push('/'); return }
-    const frame = window.requestAnimationFrame(() => {
-      setSessionState(s)
-      if (s.adviceFeedback) setFeedbackMap(s.adviceFeedback)
-    })
-    return () => window.cancelAnimationFrame(frame)
+    const searchParams = new URLSearchParams(window.location.search)
+    const artifactId = artifactIdFromLocation(searchParams)
+    if (!artifactId) { router.push('/'); return }
+    const currentArtifactId = artifactId
+    setCurrentArtifactId(currentArtifactId)
+
+    let cancelled = false
+    const isCheckoutSuccess = searchParams.get('checkout') === 'success'
+    setCheckoutSuccess(isCheckoutSuccess)
+
+    async function loadArtifact() {
+      const maxAttempts = isCheckoutSuccess ? 10 : 1
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+          const data = await fetchArtifact(currentArtifactId, 'basic')
+          if (cancelled) return
+          setSessionState(data.artifact)
+          setEntitlements(data.entitlements)
+          return
+        } catch (error) {
+          const status = (error as Error & { status?: number }).status
+          const shouldRetry = isCheckoutSuccess && status === 402 && attempt < maxAttempts - 1
+          if (shouldRetry) {
+            await new Promise(resolve => window.setTimeout(resolve, 2_000))
+            continue
+          }
+          if (!cancelled) router.push(status === 402 ? `/sales?artifactId=${currentArtifactId}` : '/')
+          return
+        }
+      }
+    }
+
+    void loadArtifact()
+    return () => { cancelled = true }
   }, [router])
 
   function handleFeedback(mentorId: string, adviceIndex: number, field: 'accepted' | 'helpful', value: boolean) {
@@ -118,7 +154,6 @@ export default function ResultPage() {
         ...prev,
         [key]: { ...prev[key], accepted: prev[key]?.accepted ?? null, helpful: prev[key]?.helpful ?? null, [field]: value },
       }
-      updateSession({ adviceFeedback: updated })
       return updated
     })
   }
@@ -129,7 +164,8 @@ export default function ResultPage() {
     return () => window.removeEventListener('scroll', handleScroll)
   }, [])
 
-  async function handleUpgrade() {
+  const handleUpgrade = useCallback(async () => {
+    if (!session) return
     setShowPayment(false)
     setIsOptimizing(true)
     setOptimizeStage('optimizing-1')
@@ -142,24 +178,30 @@ export default function ResultPage() {
       const res = await fetch('/api/optimize-resume', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
-          resumeText: session!.resumeText,
-          targetRole: session!.targetRole,
-          jobDescription: session!.jobDescription,
-          mentorAdvice: session!.mentorAdvice,
+          artifactId: session.id,
           adviceFeedback: feedbackMap,
         }),
       })
-      clearTimeout(stageTimer)
 
       if (!res.ok) throw new Error(await getApiErrorMessage(res, '优化失败，请重试'))
-      const { optimizedResume } = await res.json()
-
-      const updated = updateSession({
-        unlockedTiers: [...(session?.unlockedTiers || []), 'resume', 'video'],
-        optimizedResume,
+      const { jobId } = await res.json()
+      const job = await waitForJob<{ optimizedResume?: string }>(jobId, {
+        onUpdate: (nextJob) => {
+          if (nextJob.progressStage === 'optimizing-2') setOptimizeStage('optimizing-2')
+        },
       })
-      if (updated) setSessionState(updated)
+      clearTimeout(stageTimer)
+
+      const optimizedResume = job.result?.optimizedResume
+      if (optimizedResume) {
+        setSessionState(prev => prev ? { ...prev, optimizedResume } : prev)
+      } else {
+        const refreshed = await fetchArtifact(session.id, 'resume')
+        setSessionState(refreshed.artifact)
+        setEntitlements(refreshed.entitlements)
+      }
 
       // Animate bar to 100%, then navigate via onCompleted callback
       setOptimizeStage('optimizing-2')
@@ -169,14 +211,34 @@ export default function ResultPage() {
       setIsOptimizing(false)
       alert(error instanceof Error ? error.message : '优化失败，请重试')
     }
+  }, [feedbackMap, session])
+
+  function handleResumeCTA() {
+    if (entitlements.includes('resume')) {
+      void handleUpgrade()
+      return
+    }
+    setShowPayment(true)
   }
+
+  useEffect(() => {
+    if (!session || autoOptimizeStartedRef.current) return
+    if (
+      checkoutSuccess &&
+      entitlements.includes('resume') &&
+      !session.optimizedResume
+    ) {
+      autoOptimizeStartedRef.current = true
+      void handleUpgrade()
+    }
+  }, [checkoutSuccess, entitlements, handleUpgrade, session])
 
   if (isOptimizing) return (
     <LoadingScreen
       mode="optimize"
       stage={optimizeStage}
       completed={optimizeCompleted}
-      onCompleted={() => router.push('/upsale')}
+      onCompleted={() => router.push(`/upsale?artifactId=${session?.id}`)}
     />
   )
   if (!session) return null
@@ -193,7 +255,7 @@ export default function ResultPage() {
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <span className="text-sm font-medium">导师建议已选好？一键生成 ATS 合规简历，开启技能补强路径</span>
           <Button
-            onClick={() => setShowPayment(true)}
+            onClick={handleResumeCTA}
             className="text-white text-sm h-8 px-4 rounded-lg"
             style={{ backgroundColor: '#2A6041' }}
           >
@@ -220,7 +282,7 @@ export default function ResultPage() {
         {session.atsResult && (
           <FormatComplianceAlert
             atsResult={session.atsResult}
-            onUnlock={() => setShowPayment(true)}
+            onUnlock={handleResumeCTA}
           />
         )}
 
@@ -233,7 +295,7 @@ export default function ResultPage() {
         <LockedFeatures
           resumeText={session.resumeText}
           targetRole={session.targetRole}
-          onUnlock={() => setShowPayment(true)}
+          onUnlock={handleResumeCTA}
         />
 
         {/* Upgrade CTA */}
@@ -245,7 +307,7 @@ export default function ResultPage() {
             <span className="text-4xl font-bold">¥99</span>
           </div>
           <Button
-            onClick={() => setShowPayment(true)}
+            onClick={handleResumeCTA}
             className="text-white font-bold text-lg h-14 px-12 rounded-xl"
             style={{ backgroundColor: '#2A6041' }}
           >
@@ -257,11 +319,11 @@ export default function ResultPage() {
       <PaymentModal
         open={showPayment}
         onClose={() => setShowPayment(false)}
-        onSuccess={handleUpgrade}
         title="一键生成优化简历"
         price="¥99"
         description="AI 优化逻辑 + 导师灵魂润色 + Vibe ID 深度链接——让 ATS 和 HR 同时认可你"
         productTier="resume"
+        artifactId={session.id}
       />
       <CustomerServiceButton />
     </main>

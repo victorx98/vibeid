@@ -44,11 +44,7 @@ export interface AdviceFeedback {
   helpful: boolean | null     // true = helpful, false = not helpful, null = no feedback yet
 }
 
-export interface ResumeSession {
-  id: string
-  resumeText: string
-  targetRole: string
-  jobDescription?: string
+export interface AnalyzeResultPayload {
   atsScore: number
   atsResult?: ATSResult
   overallJudgment?: OverallJudgment
@@ -57,10 +53,16 @@ export interface ResumeSession {
   topCompanies: string[]
   competition: CompetitionEstimate
   mentorAdvice: MentorAdvice[]
-  adviceFeedback?: Record<string, AdviceFeedback>  // key: "mentorId-adviceIndex"
-  unlockedTiers: ('basic' | 'resume' | 'video')[]
+}
+
+export interface ResumeArtifactPayload extends AnalyzeResultPayload {
+  id: string
+  resumeText: string
+  targetRole: string
+  jobDescription?: string
   optimizedResume?: string
   createdAt: string
+  updatedAt: string
 }
 
 export interface MentorAdviceItem {
