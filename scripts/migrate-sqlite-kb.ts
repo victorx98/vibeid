@@ -26,6 +26,10 @@ const EXPECTED_COUNTS = {
 type TableName = keyof typeof EXPECTED_COUNTS
 type Row = Record<string, unknown>
 
+interface IntegrityRepairs {
+  beforeAfterSessionIds: number
+}
+
 interface TableSpec {
   sqliteTable: string
   pgTable: TableName
@@ -208,6 +212,96 @@ async function readSourceData(dbPath: string) {
   return data
 }
 
+function numericValue(row: Row, column: string): number | null {
+  const value = row[column]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+function textValue(row: Row, column: string): string | null {
+  const value = row[column]
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
+function repairSourceIntegrity(data: Record<TableName, Row[]>): IntegrityRepairs {
+  const sessionIds = new Set(data.sessions.map((row) => numericValue(row, 'id')))
+  let beforeAfterSessionIds = 0
+
+  // The legacy SQLite file contains orphan before/after examples. Repair only
+  // when their segment reference uniquely identifies the intended session.
+  for (const row of data.before_after_pairs) {
+    const sessionId = numericValue(row, 'session_id')
+    if (sessionId !== null && sessionIds.has(sessionId)) continue
+
+    const sourceSegment = textValue(row, 'source_segment')
+    const l3Tag = textValue(row, 'L3_tag')
+    if (!sourceSegment || !l3Tag) {
+      throw new Error(`Unable to repair before_after_pairs session_id for id ${row.id ?? 'unknown'}`)
+    }
+
+    const matchingSessionIds = new Set<number>()
+    for (const segment of data.segments) {
+      const segmentSessionId = numericValue(segment, 'session_id')
+      if (
+        segmentSessionId !== null &&
+        textValue(segment, 'segment_id') === sourceSegment &&
+        textValue(segment, 'L3') === l3Tag
+      ) {
+        matchingSessionIds.add(segmentSessionId)
+      }
+    }
+
+    if (matchingSessionIds.size !== 1) {
+      throw new Error(`Unable to uniquely repair before_after_pairs session_id for id ${row.id ?? 'unknown'}`)
+    }
+
+    row.session_id = [...matchingSessionIds][0]
+    beforeAfterSessionIds += 1
+  }
+
+  return { beforeAfterSessionIds }
+}
+
+function assertSourceForeignKeys(data: Record<TableName, Row[]>) {
+  const mentorIds = new Set(data.mentors.map((row) => numericValue(row, 'id')))
+  const studentIds = new Set(data.source_students.map((row) => numericValue(row, 'id')))
+  const sessionIds = new Set(data.sessions.map((row) => numericValue(row, 'id')))
+
+  const invalidSessions = data.sessions.filter((row) => {
+    const mentorId = numericValue(row, 'mentor_id')
+    const studentId = numericValue(row, 'student_id')
+    return mentorId === null || studentId === null || !mentorIds.has(mentorId) || !studentIds.has(studentId)
+  })
+  const invalidSegments = data.segments.filter((row) => {
+    const sessionId = numericValue(row, 'session_id')
+    return sessionId === null || !sessionIds.has(sessionId)
+  })
+  const invalidBeforeAfter = data.before_after_pairs.filter((row) => {
+    const sessionId = numericValue(row, 'session_id')
+    return sessionId === null || !sessionIds.has(sessionId)
+  })
+
+  const failures = [
+    { table: 'sessions', count: invalidSessions.length },
+    { table: 'segments', count: invalidSegments.length },
+    { table: 'before_after_pairs', count: invalidBeforeAfter.length },
+  ].filter(({ count }) => count > 0)
+
+  if (failures.length > 0) {
+    throw new Error(
+      `SQLite KB foreign key validation failed: ${failures
+        .map(({ table, count }) => `${table}=${count}`)
+        .join(', ')}`
+    )
+  }
+}
+
 function countRows(data: Record<TableName, Row[]>): Record<TableName, number> {
   return {
     mentors: data.mentors.length,
@@ -270,11 +364,16 @@ async function assertDestinationSchema(client: PoolClient) {
 }
 
 async function truncateDestination(client: PoolClient) {
-  await client.query(`truncate table ${SCHEMA}.before_after_pairs`)
-  await client.query(`truncate table ${SCHEMA}.segments`)
-  await client.query(`truncate table ${SCHEMA}.sessions`)
-  await client.query(`truncate table ${SCHEMA}.source_students`)
-  await client.query(`truncate table ${SCHEMA}.mentors`)
+  await client.query(
+    `
+      truncate table
+        ${SCHEMA}.before_after_pairs,
+        ${SCHEMA}.segments,
+        ${SCHEMA}.sessions,
+        ${SCHEMA}.source_students,
+        ${SCHEMA}.mentors
+    `
+  )
 }
 
 async function insertRows(client: PoolClient, table: TableSpec, rows: Row[]) {
@@ -363,6 +462,7 @@ function printSummary(input: {
   sourceSha: string
   counts: Record<TableName, number>
   checksums: Record<TableName, string>
+  repairs: IntegrityRepairs
 }) {
   const summary = {
     mode: input.mode,
@@ -370,6 +470,7 @@ function printSummary(input: {
     sourceSha256: input.sourceSha,
     counts: input.counts,
     checksums: input.checksums,
+    integrityRepairs: input.repairs,
     expectedCounts: EXPECTED_COUNTS,
   }
   console.log(JSON.stringify(summary, null, 2))
@@ -382,6 +483,8 @@ async function main() {
 
   const sourceSha = fileSha256(dbPath)
   const data = await readSourceData(dbPath)
+  const repairs = repairSourceIntegrity(data)
+  assertSourceForeignKeys(data)
   const counts = countRows(data)
   const checksums = checksumTables(data)
   assertExpectedCounts(counts)
@@ -390,7 +493,7 @@ async function main() {
     await applyMigration({ dbPath, sourceSha, data, counts, checksums })
   }
 
-  printSummary({ mode, dbPath, sourceSha, counts, checksums })
+  printSummary({ mode, dbPath, sourceSha, counts, checksums, repairs })
 }
 
 main().catch((error) => {

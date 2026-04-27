@@ -44,7 +44,7 @@ export async function callClaude(
     maxRetries?: number
   }
 ): Promise<string> {
-  const model = options?.model || 'claude-sonnet-4-20250514'
+  const model = options?.model || 'claude-sonnet-4-6'
   const timeoutMs = options?.timeoutMs ?? 60_000
 
   const systemContent: Anthropic.TextBlockParam[] = [

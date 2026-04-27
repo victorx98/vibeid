@@ -1,9 +1,6 @@
 import { loadEnvConfig } from '@next/env'
 import type { AiJobQueuePayload } from '../lib/job-queue'
-
-loadEnvConfig(process.cwd())
-
-const {
+import {
   buildOptimizeInputFromArtifact,
   completeJob,
   failJob,
@@ -14,13 +11,15 @@ const {
   resetStaleRunningJobs,
   saveAnalyzeResult,
   saveOptimizedResume,
-} = await import('../lib/backend-store')
-const { getBoss } = await import('../lib/db')
-const { AI_QUEUE_NAMES, enqueueAiJob } = await import('../lib/job-queue')
-const { logError, logInfo, logWarn } = await import('../lib/logger')
-const { optimizeResumeJobRequestSchema } = await import('../lib/validation')
-const { runResumeAnalysis } = await import('../app/api/analyze/route')
-const { runResumeOptimization } = await import('../app/api/optimize-resume/route')
+} from '../lib/backend-store'
+import { getBoss } from '../lib/db'
+import { AI_QUEUE_NAMES, enqueueAiJob } from '../lib/job-queue'
+import { logError, logInfo, logWarn } from '../lib/logger'
+import { optimizeResumeJobRequestSchema } from '../lib/validation'
+import { runResumeAnalysis } from '../app/api/analyze/route'
+import { runResumeOptimization } from '../app/api/optimize-resume/route'
+
+loadEnvConfig(process.cwd())
 
 async function withJobHeartbeat<T>(
   jobId: string,
