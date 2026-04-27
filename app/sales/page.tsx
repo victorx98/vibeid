@@ -11,11 +11,15 @@ import SkillGapAnalysis from '@/components/result/SkillGapAnalysis'
 import { artifactIdFromLocation, fetchArtifact, setCurrentArtifactId } from '@/lib/client-artifacts'
 import CustomerServiceButton from '@/components/shared/CustomerServiceButton'
 import { ResumeArtifactPayload } from '@/lib/types'
+import { getApiErrorMessage } from '@/lib/client-api'
 
 export default function SalesPage() {
   const router = useRouter()
   const [session, setSession] = useState<ResumeArtifactPayload | null>(null)
   const [showPayment, setShowPayment] = useState(false)
+  const [emailInput, setEmailInput] = useState('')
+  const [emailError, setEmailError] = useState<string | null>(null)
+  const [isConfirmingEmail, setIsConfirmingEmail] = useState(false)
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)
@@ -26,7 +30,10 @@ export default function SalesPage() {
     let cancelled = false
     fetchArtifact(artifactId)
       .then(({ artifact }) => {
-        if (!cancelled) setSession(artifact)
+        if (!cancelled) {
+          setSession(artifact)
+          setEmailInput(artifact.confirmedEmail || artifact.candidateEmail || '')
+        }
       })
       .catch(() => {
         if (!cancelled) router.push('/')
@@ -39,6 +46,44 @@ export default function SalesPage() {
 
   const unlockedMentor = session.mentorAdvice.find(m => !m.isLocked)
   const lockedMentors = session.mentorAdvice.filter(m => m.isLocked)
+  const emailConfirmed = Boolean(session.confirmedEmail)
+
+  async function handleConfirmEmail() {
+    if (!session) return
+    setEmailError(null)
+    setIsConfirmingEmail(true)
+    try {
+      const res = await fetch('/api/users/confirm-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ artifactId: session.id, email: emailInput }),
+      })
+      if (!res.ok) throw new Error(await getApiErrorMessage(res, '邮箱确认失败，请稍后重试'))
+      const { email, confirmedAt } = await res.json()
+      setSession(prev =>
+        prev
+          ? { ...prev, confirmedEmail: email, emailConfirmedAt: confirmedAt }
+          : prev
+      )
+    } catch (error) {
+      setEmailError(error instanceof Error ? error.message : '邮箱确认失败，请稍后重试')
+    } finally {
+      setIsConfirmingEmail(false)
+    }
+  }
+
+  function openPayment() {
+    if (!emailConfirmed) {
+      setEmailError('请先确认用于注册和接收服务通知的邮箱')
+      document.getElementById('confirm-email-card')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+      return
+    }
+    setShowPayment(true)
+  }
 
   return (
     <main className="flex-1 min-h-screen" style={{ backgroundColor: '#F7F5EF' }}>
@@ -60,6 +105,45 @@ export default function SalesPage() {
             目标岗位：<span className="font-medium text-gray-700">{session.targetRole}</span>
             {session.jobDescription && <span className="ml-2 text-xs font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>已匹配 JD</span>}
           </p>
+        </div>
+
+        <div
+          id="confirm-email-card"
+          className="rounded-2xl bg-white p-5 shadow-sm"
+          style={{ border: emailConfirmed ? '1px solid #DCFCE7' : '1px solid #FDE68A' }}
+        >
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-gray-900">确认注册邮箱</p>
+              <p className="mt-1 text-sm text-gray-500">
+                用于保留本次分析记录、支付后找回服务和接收后续交付通知。
+              </p>
+              <input
+                type="email"
+                value={emailInput}
+                disabled={emailConfirmed || isConfirmingEmail}
+                onChange={(event) => setEmailInput(event.target.value)}
+                placeholder="you@example.com"
+                className="mt-3 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-green-700 disabled:bg-gray-50"
+              />
+              {emailError && (
+                <p className="mt-2 text-sm text-red-600">{emailError}</p>
+              )}
+              {emailConfirmed && (
+                <p className="mt-2 text-sm font-medium text-green-700">已确认：{session.confirmedEmail}</p>
+              )}
+            </div>
+            {!emailConfirmed && (
+              <Button
+                onClick={handleConfirmEmail}
+                disabled={isConfirmingEmail || !emailInput.trim()}
+                className="h-11 rounded-xl px-6 text-white"
+                style={{ backgroundColor: '#2A6041' }}
+              >
+                {isConfirmingEmail ? '确认中...' : '确认邮箱'}
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Anxiety Dashboard */}
@@ -143,7 +227,7 @@ export default function SalesPage() {
                 key={mentor.id}
                 mentor={mentor}
                 index={i + 1}
-                onUnlock={() => setShowPayment(true)}
+                onUnlock={openPayment}
               />
             ))}
           </div>
@@ -160,7 +244,7 @@ export default function SalesPage() {
             <span>✓ 一键生成优化简历</span>
           </div>
           <Button
-            onClick={() => setShowPayment(true)}
+            onClick={openPayment}
             className="btn-primary font-bold text-lg h-14 px-12 rounded-xl"
           >
             立即解锁，查看完整报告 →

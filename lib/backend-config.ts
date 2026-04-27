@@ -23,7 +23,7 @@ export function supabaseServerConfigured(): boolean {
   return Boolean(
     getEnv('NEXT_PUBLIC_SUPABASE_URL') &&
       getEnv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY') &&
-      getEnv('SUPABASE_SERVICE_ROLE_KEY')
+      getSupabaseAdminKey()
   )
 }
 
@@ -36,6 +36,16 @@ export function supabaseBrowserConfigured(): boolean {
 
 export function databaseConfigured(): boolean {
   return Boolean(getEnv('DATABASE_URL'))
+}
+
+export function getSupabaseAdminKey(): string | null {
+  return getEnv('SUPABASE_SECRET_KEY') ?? getEnv('SUPABASE_SERVICE_ROLE_KEY')
+}
+
+export function requireSupabaseAdminKey(): string {
+  const value = getSupabaseAdminKey()
+  if (!value) throw new Error('SUPABASE_SECRET_KEY is not configured')
+  return value
 }
 
 export function billingEnabled(): boolean {

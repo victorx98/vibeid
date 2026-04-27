@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer'
 import { describe, expect, it } from 'vitest'
 
 import {
+  analyzeRequestSchema,
   getResumeUploadKind,
   hasExpectedFileSignature,
   isAllowedResumeMime,
@@ -28,5 +29,14 @@ describe('validation helpers', () => {
     expect(isAllowedResumeMime('docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')).toBe(true)
     expect(hasExpectedFileSignature('pdf', Buffer.from('%PDF-1.7'))).toBe(true)
     expect(hasExpectedFileSignature('docx', Buffer.from('504b0304', 'hex'))).toBe(true)
+  })
+
+  it('normalizes optional candidate email on analyze requests', () => {
+    const parsed = analyzeRequestSchema.parse({
+      resumeText: 'Experienced analyst with project history',
+      targetRole: 'Data Analyst',
+      candidateEmail: '  DUKE@example.com  ',
+    })
+    expect(parsed.candidateEmail).toBe('DUKE@example.com')
   })
 })

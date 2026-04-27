@@ -87,6 +87,12 @@ export async function POST(request: NextRequest) {
         { status: 404, headers }
       )
     }
+    if (!artifact.confirmedEmail) {
+      return Response.json(
+        { error: '请先确认用于注册和接收服务通知的邮箱' },
+        { status: 400, headers }
+      )
+    }
 
     const orderId = await createPendingOrder({
       userId: auth.user.id,

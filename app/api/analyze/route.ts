@@ -2,13 +2,11 @@ import { NextRequest } from 'next/server'
 import { ZodError } from 'zod'
 
 import { callClaude } from '@/lib/claude'
-import Database from 'better-sqlite3'
-import path from 'path'
-import fs from 'fs'
 import { logError } from '@/lib/logger'
 import { createAnalyzeArtifactAndJob, failJob } from '@/lib/backend-store'
 import { databaseConfigured } from '@/lib/db'
 import { enqueueAiJob } from '@/lib/job-queue'
+import { getMentorKnowledgeBase, type MentorRow } from '@/lib/kb-store'
 import { USER_CONTENT_GUARDRAIL, toPromptBlock, toPromptLine } from '@/lib/prompting'
 import {
   RATE_LIMITS,
@@ -20,8 +18,6 @@ import { analyzeRequestSchema, type AnalyzeRequest } from '@/lib/validation'
 import type { AnalyzeResultPayload } from '@/lib/types'
 
 export const runtime = 'nodejs'
-
-const DB_PATH = path.join(process.cwd(), 'data', 'resume_material_library.db')
 
 // ── ATS Strict Scoring System Prompt ──
 const ATS_SYSTEM_PROMPT = `You are an ATS (Applicant Tracking System) strict scoring engine. When given a resume, you analyze it and return a structured ATS score using the strict scoring methodology defined below.
@@ -173,35 +169,11 @@ const LOCKED_MENTOR_SYSTEM = `你是简历顾问平台的导师预览生成器�
 - 建议要有实质性（指出真实问题），但solution留有悬念
 - 返回严格JSON，无代码块`
 
-// ── DB types ──
-interface MentorRow {
-  id: number; name: string; company: string; title: string
-  industry_expertise: string; coaching_positions: string | null
-  credibility_signal: string; career_path: string | null
-}
-interface SegmentRow {
-  topic: string; L1: string | null; L2: string | null
-  P_mentor: string | null; A_action: string | null
-  I_insight: string | null; H_hook: string | null
-  E_example: string | null; HR_os: string | null
-  advice_type: string | null
-  mentor_name: string; company: string
-}
-interface BeforeAfterRow {
-  before_text: string; after_text: string; reason: string
-  issue_tags: string | null; mentor_quote: string | null
-  mentor_name: string; company: string
-}
-
 export async function runResumeAnalysis({
   resumeText,
   targetRole,
   jobDescription,
 }: AnalyzeRequest): Promise<AnalyzeResultPayload> {
-  if (!fs.existsSync(DB_PATH)) {
-    throw new Error(`Mentor knowledge base missing at ${DB_PATH}`)
-  }
-
     const jdSection = jobDescription
       ? `\n\nJob Description (use this to extract keywords and match against resume):\n${toPromptBlock('job_description', jobDescription, 3000)}`
       : ''
@@ -255,105 +227,6 @@ Return JSON:
     // ══════════════════════════════════════════
     // Run ATS + Competition + DB queries ALL in parallel
     // ══════════════════════════════════════════
-    // Extract keywords from JD for DB segment re-ranking
-    function extractJDKeywords(jd: string): string[] {
-      if (!jd) return []
-      const lower = jd.toLowerCase()
-      // Split by common delimiters and filter short/stop words
-      const tokens = lower.split(/[\s,;.·•|/\\()（）【】「」\-—:：!！?？\n\r]+/)
-      const stopWords = new Set(['the','a','an','and','or','is','are','was','were','be','been',
-        'to','of','in','for','on','with','at','by','from','as','into','through','during',
-        'before','after','about','between','such','this','that','these','those','will',
-        '的','了','和','与','在','是','有','中','等','及','对','要','能','会','可以'])
-      return [...new Set(tokens.filter(t => t.length >= 2 && !stopWords.has(t)))]
-    }
-
-    function scoreSegmentByJD(seg: SegmentRow, jdKeywords: string[]): number {
-      if (jdKeywords.length === 0) return 0
-      const text = [seg.topic, seg.L1, seg.L2, seg.A_action, seg.P_mentor]
-        .filter(Boolean).join(' ').toLowerCase()
-      return jdKeywords.filter(kw => text.includes(kw)).length
-    }
-
-    function scoreMentorRelevance(mentor: MentorRow, keywords: string[]): number {
-      const text = [
-        mentor.title, mentor.company, mentor.industry_expertise,
-        mentor.coaching_positions, mentor.career_path,
-      ].filter(Boolean).join(' ').toLowerCase()
-      return keywords.filter(kw => text.includes(kw)).length
-    }
-
-    function queryDB() {
-      const db = new Database(DB_PATH, { readonly: true })
-      try {
-        const allMentorsRaw = db.prepare(`
-          SELECT id, name, company, title, industry_expertise, coaching_positions,
-                 credibility_signal, career_path
-          FROM mentors
-        `).all() as MentorRow[]
-
-        // Rank mentors by relevance to target role + JD, keep top 25
-        const roleKeywords = extractJDKeywords(
-          `${targetRole} ${jobDescription || ''}`
-        )
-        const allMentors = roleKeywords.length > 0
-          ? allMentorsRaw
-              .sort((a, b) => scoreMentorRelevance(b, roleKeywords) - scoreMentorRelevance(a, roleKeywords))
-              .slice(0, 25)
-          : allMentorsRaw.slice(0, 25)
-
-        const universalSegments = db.prepare(`
-          SELECT seg.topic, seg.L1, seg.L2, seg.P_mentor, seg.A_action,
-                 seg.I_insight, seg.H_hook, seg.E_example, seg.HR_os, seg.advice_type,
-                 m.name as mentor_name, m.company
-          FROM segments seg
-          JOIN sessions s ON seg.session_id = s.id
-          JOIN mentors m ON s.mentor_id = m.id
-          WHERE seg.generality = 'universal'
-            AND seg.A_action IS NOT NULL AND seg.A_action != ''
-            AND (seg.confidence = 'high' OR seg.confidence IS NULL)
-          ORDER BY seg.background_fit DESC, RANDOM() LIMIT 25
-        `).all() as SegmentRow[]
-
-        // Fetch more specific segments than needed, then re-rank by JD relevance
-        const specificSegmentsRaw = db.prepare(`
-          SELECT seg.topic, seg.L1, seg.L2, seg.P_mentor, seg.A_action,
-                 seg.I_insight, seg.H_hook, seg.E_example, seg.HR_os, seg.advice_type,
-                 m.name as mentor_name, m.company
-          FROM segments seg
-          JOIN sessions s ON seg.session_id = s.id
-          JOIN mentors m ON s.mentor_id = m.id
-          WHERE seg.generality IN ('industry-specific', 'role-specific')
-            AND seg.A_action IS NOT NULL AND seg.A_action != ''
-          ORDER BY seg.industry_fit ASC, RANDOM() LIMIT 40
-        `).all() as SegmentRow[]
-
-        // Re-rank by JD keyword overlap when JD is provided
-        const jdKws = extractJDKeywords(jobDescription || '')
-        let specificSegments: SegmentRow[]
-        if (jdKws.length > 0) {
-          specificSegments = specificSegmentsRaw
-            .sort((a, b) => scoreSegmentByJD(b, jdKws) - scoreSegmentByJD(a, jdKws))
-            .slice(0, 15)
-        } else {
-          specificSegments = specificSegmentsRaw.slice(0, 15)
-        }
-
-        const beforeAfter = db.prepare(`
-          SELECT ba.before_text, ba.after_text, ba.reason, ba.issue_tags,
-                 ba.mentor_quote, m.name as mentor_name, m.company
-          FROM before_after_pairs ba
-          JOIN sessions s ON ba.session_id = s.id
-          JOIN mentors m ON s.mentor_id = m.id
-          ORDER BY RANDOM() LIMIT 12
-        `).all() as BeforeAfterRow[]
-
-        return { allMentors, universalSegments, specificSegments, beforeAfter }
-      } finally {
-        db.close()
-      }
-    }
-
     // ATS (Sonnet, 2048 tokens) + Competition (Haiku, 1024 tokens) + DB — all parallel
     const [atsResponse, competitionResponse, dbData] = await Promise.all([
       callClaude(`${ATS_SYSTEM_PROMPT}\n\n${USER_CONTENT_GUARDRAIL}`, atsPrompt, 0, {
@@ -366,7 +239,7 @@ Return JSON:
         maxTokens: 1024,
         timeoutMs: 30_000,
       }),
-      Promise.resolve(queryDB()),
+      getMentorKnowledgeBase({ targetRole, jobDescription }),
     ])
 
     let atsResult

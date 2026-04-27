@@ -65,6 +65,7 @@ export const analyzeRequestSchema = z.object({
   resumeText: requiredTrimmedString(10, MAX_RESUME_TEXT_CHARS),
   targetRole: requiredTrimmedString(2, MAX_TARGET_ROLE_CHARS),
   jobDescription: optionalTrimmedString(MAX_JOB_DESCRIPTION_CHARS),
+  candidateEmail: optionalTrimmedString(320).pipe(z.string().email().optional()),
 })
 
 export const optimizeResumeRequestSchema = z.object({
@@ -94,12 +95,18 @@ export const checkoutSessionRequestSchema = z.object({
   artifactId: z.string().uuid(),
 })
 
+export const confirmEmailRequestSchema = z.object({
+  artifactId: z.string().uuid(),
+  email: requiredTrimmedString(3, 320).pipe(z.string().email()),
+})
+
 export type AnalyzeRequest = z.infer<typeof analyzeRequestSchema>
 export type OptimizeResumeRequest = z.infer<typeof optimizeResumeRequestSchema>
 export type OptimizeResumeJobRequest = z.infer<typeof optimizeResumeJobRequestSchema>
 export type PreviewOptimizeRequest = z.infer<typeof previewOptimizeRequestSchema>
 export type CheckoutConfirmRequest = z.infer<typeof checkoutConfirmRequestSchema>
 export type CheckoutSessionRequest = z.infer<typeof checkoutSessionRequestSchema>
+export type ConfirmEmailRequest = z.infer<typeof confirmEmailRequestSchema>
 
 export function getResumeUploadKind(fileName: string): ResumeUploadKind | null {
   const lowerName = fileName.toLowerCase()

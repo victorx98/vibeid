@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer'
 
 import { NextRequest } from 'next/server'
 
+import { extractCandidateEmail } from '@/lib/email'
 import { logError, logInfo, logWarn } from '@/lib/logger'
 import {
   RATE_LIMITS,
@@ -122,7 +123,7 @@ export async function POST(request: NextRequest) {
     })
 
     return Response.json(
-      { text: trimmed, pageCount },
+      { text: trimmed, pageCount, candidateEmail: extractCandidateEmail(trimmed) },
       { headers: createRateLimitHeaders(rateLimit) }
     )
   } catch (error) {

@@ -6,6 +6,7 @@ import type { NextRequest } from 'next/server'
 import {
   getEnv,
   requireEnv,
+  requireSupabaseAdminKey,
   supabaseBrowserConfigured,
   supabaseServerConfigured,
 } from '@/lib/backend-config'
@@ -39,7 +40,7 @@ export function createSupabaseAdminClient() {
 
   return createSupabaseClient(
     requireEnv('NEXT_PUBLIC_SUPABASE_URL'),
-    requireEnv('SUPABASE_SERVICE_ROLE_KEY'),
+    requireSupabaseAdminKey(),
     {
       auth: {
         autoRefreshToken: false,

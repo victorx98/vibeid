@@ -13,7 +13,8 @@ Chinese-language AI resume review funnel for MentorX / Vibe ID. The current app 
 - Next.js 16 App Router
 - React 19
 - Anthropic Claude for analysis and optimization
-- Read-only SQLite mentor knowledge base at `data/resume_material_library.db`
+- Supabase/Postgres runtime storage
+- Mentor knowledge base in the Supabase `vibeid` schema, migrated from `data/resume_material_library.db`
 
 ## Installation
 
@@ -37,7 +38,20 @@ cp .env.example .env.local
 3. Edit `.env.local` and set:
 
 - `ANTHROPIC_API_KEY`
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SECRET_KEY` from the new Supabase API Keys tab (`sb_secret_...`), or temporary legacy `SUPABASE_SERVICE_ROLE_KEY`
+- `DATABASE_URL`
 - `ENTITLEMENTS_SECRET` to a random 32+ character value if you want to test signed unlock flows locally
+
+4. Apply the Supabase migrations and migrate the mentor KB:
+
+```bash
+npm run kb:migrate -- --dry-run
+npm run kb:migrate -- --apply
+```
+
+The migration reads `SQLITE_KB_PATH` or defaults to `data/resume_material_library.db`.
 
 ## Launch
 

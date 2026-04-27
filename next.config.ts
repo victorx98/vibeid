@@ -74,7 +74,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  serverExternalPackages: ['better-sqlite3', 'pg', 'pg-boss'],
+  serverExternalPackages: ['pg', 'pg-boss'],
   async headers() {
     return [
       {

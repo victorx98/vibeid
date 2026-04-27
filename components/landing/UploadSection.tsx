@@ -59,7 +59,7 @@ export default function UploadSection() {
       formData.append('file', file)
       const parseRes = await fetch('/api/parse-resume', { method: 'POST', body: formData })
       if (!parseRes.ok) throw new Error(await getApiErrorMessage(parseRes, '简历解析失败'))
-      const { text } = await parseRes.json()
+      const { text, candidateEmail } = await parseRes.json()
 
       // Step 2: Persist artifact + enqueue analysis
       setLoadingStage('analyzing')
@@ -72,6 +72,7 @@ export default function UploadSection() {
           resumeText: text,
           targetRole: targetRole.trim(),
           jobDescription: jobDescription.trim() || undefined,
+          candidateEmail: candidateEmail || undefined,
         }),
       })
       if (!analyzeRes.ok) throw new Error(await getApiErrorMessage(analyzeRes, '分析失败'))

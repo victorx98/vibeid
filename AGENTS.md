@@ -21,36 +21,34 @@ Technical shape:
 - UI is mostly client components under `app/*` and `components/*`.
 - Server logic is concentrated in App Router route handlers under `app/api/*`.
 - Animation and presentation rely on Framer Motion plus Tailwind utilities, but many screens also use inline styles heavily.
-- `README.md` is still boilerplate; the code is the source of truth.
+- `README.md` documents install, env, migration, and verification basics; the code remains the source of truth for detailed behavior.
 
 Operational note:
-- This checkout currently has no `node_modules`, so `npm install` is required before relying on local Next docs or running the app.
+- Use `npm ci` before relying on local Next docs or running the app.
 
 ## DB Settings and Where Data Is Stored
 
-The only server-side database in the app code is a read-only SQLite knowledge base used during analysis.
+The app now uses Supabase/Postgres for runtime storage plus a Postgres-hosted mentor knowledge base.
 
 Database settings:
-- Driver: `better-sqlite3`
-- Config site: [`app/api/analyze/route.ts`](/home/victor/vibeid/app/api/analyze/route.ts)
-- Preferred DB path: `data/resume_material_library.db`
-- Fallback DB path if the local file is missing: `C:/Users/Eric/myproject/resume_material_library.db`
-- Open mode: `readonly: true`
-- `next.config.ts` marks `better-sqlite3` as a server external package
+- Driver: `pg`
+- Core config: [`lib/db.ts`](/home/victor/vibeid/lib/db.ts)
+- Required env var for DB queries/workers/migration: `DATABASE_URL`
+- Supabase browser key: `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_...`)
+- Supabase backend admin key: prefer `SUPABASE_SECRET_KEY` (`sb_secret_...`), with `SUPABASE_SERVICE_ROLE_KEY` only as a temporary legacy fallback
 
-What the SQLite file stores:
-- A curated mentor/advice corpus, not per-user runtime state.
-- Tables referenced by the app: `mentors`, `segments`, `sessions`, `before_after_pairs`
-- [`app/api/analyze/route.ts`](/home/victor/vibeid/app/api/analyze/route.ts) reads those tables to rank mentors, fetch reusable advice segments, and fetch before/after rewrite examples.
+What the `vibeid` schema stores:
+- A curated mentor/advice corpus migrated from `data/resume_material_library.db`
+- Tables referenced by the app: `vibeid.mentors`, `vibeid.segments`, `vibeid.sessions`, `vibeid.before_after_pairs`
+- Legacy SQLite `students` are migrated to `vibeid.source_students` as source-session records, not product users
+- [`lib/kb-store.ts`](/home/victor/vibeid/lib/kb-store.ts) reads those tables to rank mentors, fetch reusable advice segments, and fetch before/after rewrite examples.
 
-Where user data is actually stored:
-- `sessionStorage["resume_session"]` via [`lib/session.ts`](/home/victor/vibeid/lib/session.ts)
-  - Stores parsed resume text, target role, optional JD, ATS result, competition estimate, mentor advice, unlocked tiers, and optimized resume.
-- `localStorage["user_feedbacks"]` in [`app/upsale/page.tsx`](/home/victor/vibeid/app/upsale/page.tsx)
-- `localStorage["waitlist_emails"]` in [`components/upsale/UpsaleServices.tsx`](/home/victor/vibeid/components/upsale/UpsaleServices.tsx)
-
-Important implication:
-- Current app code does not persist uploaded resumes, analysis results, or purchases into SQLite or any other server-side user database. User-specific state is browser-local unless a future backend is added.
+Where user data is stored:
+- `public.resume_artifacts` stores uploaded resume text, target role, optional JD, analysis result, mentor advice, and optimized resume
+- `ai.jobs` stores queued/running/completed analyze and optimize jobs
+- `billing.orders`, `billing.entitlements`, and `billing.stripe_events` store payment state and unlocks
+- `sessionStorage["current_resume_artifact_id"]` stores only the current artifact id for client navigation recovery
+- `localStorage["user_feedbacks"]` and `localStorage["waitlist_emails"]` remain client-local UI feedback/waitlist helpers
 
 ## How AI Is Integrated
 
@@ -70,7 +68,7 @@ Route-level AI flow:
 - [`app/api/analyze/route.ts`](/home/victor/vibeid/app/api/analyze/route.ts)
   - Calls Claude for ATS scoring.
   - Calls Claude for job-market competition estimation.
-  - Reads SQLite mentor knowledge in parallel.
+  - Reads Supabase/Postgres mentor knowledge from the `vibeid` schema in parallel.
   - Builds grounded mentor prompts from DB segments plus before/after examples.
   - Calls Claude again for 1 fully unlocked mentor report and 3 locked teaser mentors.
   - Returns ATS results, compensation framing, competition estimate, and mentor advice to the client.
@@ -88,9 +86,8 @@ Grounding strategy:
   - target role
   - optional JD text
   - ATS findings
-  - mentor/advice examples from SQLite
+  - mentor/advice examples from the `vibeid` KB schema
 
 Separate static demo:
 - [`public/vibe-id-sample/assets/js/chat.js`](/home/victor/vibeid/public/vibe-id-sample/assets/js/chat.js) is a separate front-end sample, not the main Next API pipeline.
-- That script can call Anthropic directly from the browser using `window.ANTHROPIC_API_KEY`.
-- If no browser key is injected, it falls back to a local keyword-based responder.
+- That script is local keyword fallback only; the proxy blocks `/vibe-id-sample` unless `NEXT_PUBLIC_ENABLE_VIBE_SAMPLE=true`.

@@ -60,6 +60,9 @@ export interface ResumeArtifactPayload extends AnalyzeResultPayload {
   resumeText: string
   targetRole: string
   jobDescription?: string
+  candidateEmail?: string
+  confirmedEmail?: string
+  emailConfirmedAt?: string
   optimizedResume?: string
   createdAt: string
   updatedAt: string

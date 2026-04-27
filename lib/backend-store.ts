@@ -34,6 +34,9 @@ interface ArtifactRow {
   resume_text: string
   target_role: string
   job_description: string | null
+  candidate_email: string | null
+  confirmed_email: string | null
+  email_confirmed_at: Date | null
   ats_result: unknown
   competition: unknown
   mentor_advice: unknown
@@ -96,6 +99,9 @@ function mapArtifact(row: ArtifactRow): ResumeArtifactPayload {
     resumeText: row.resume_text,
     targetRole: row.target_role,
     jobDescription: row.job_description ?? undefined,
+    candidateEmail: row.candidate_email ?? undefined,
+    confirmedEmail: row.confirmed_email ?? undefined,
+    emailConfirmedAt: row.email_confirmed_at ? toIso(row.email_confirmed_at) : undefined,
     atsScore: analysis?.atsScore ?? atsResult?.final_score ?? 0,
     atsResult,
     overallJudgment: analysis?.overallJudgment,
@@ -144,8 +150,8 @@ export async function createAnalyzeArtifactAndJob(
     const artifact = await client.query<{ id: string }>(
       `
         insert into public.resume_artifacts
-          (user_id, resume_text, target_role, job_description)
-        values ($1, $2, $3, $4)
+          (user_id, resume_text, target_role, job_description, candidate_email)
+        values ($1, $2, $3, $4, $5)
         returning id
       `,
       [
@@ -153,6 +159,7 @@ export async function createAnalyzeArtifactAndJob(
         input.resumeText,
         input.targetRole,
         input.jobDescription ?? null,
+        input.candidateEmail ?? null,
       ]
     )
     const artifactId = artifact.rows[0].id
@@ -191,6 +198,7 @@ export async function getArtifactForUser(
   const result = await query<ArtifactRow>(
     `
       select id, user_id, resume_text, target_role, job_description,
+             candidate_email, confirmed_email, email_confirmed_at,
              ats_result, competition, mentor_advice, analysis_result,
              optimized_resume, created_at, updated_at
       from public.resume_artifacts
@@ -207,6 +215,7 @@ export async function getArtifactForWorker(
   const result = await query<ArtifactRow>(
     `
       select id, user_id, resume_text, target_role, job_description,
+             candidate_email, confirmed_email, email_confirmed_at,
              ats_result, competition, mentor_advice, analysis_result,
              optimized_resume, created_at, updated_at
       from public.resume_artifacts
@@ -248,6 +257,23 @@ export async function saveOptimizedResume(
     `update public.resume_artifacts set optimized_resume = $2 where id = $1`,
     [artifactId, optimizedResume]
   )
+}
+
+export async function confirmArtifactEmailForUser(input: {
+  userId: string
+  artifactId: string
+  email: string
+}): Promise<void> {
+  const result = await query(
+    `
+      update public.resume_artifacts
+      set confirmed_email = $3,
+          email_confirmed_at = now()
+      where id = $1 and user_id = $2
+    `,
+    [input.artifactId, input.userId, input.email.toLowerCase()]
+  )
+  if (result.rowCount !== 1) throw new Error('artifact_not_found')
 }
 
 export async function getJobForUser(
