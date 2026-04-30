@@ -1,0 +1,193 @@
+name: Build & Push to ECR (vibeid)
+
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - "README.md"
+      - "docs/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  AWS_ACCOUNT_ID: "547215791008"
+  ECR_REPO: mentorx/vibeid
+  DOCKER_PLATFORM: linux/arm64
+  BUILD_NODE_OPTIONS: --max-old-space-size=4096
+  CONTAINER_NAME: vibeid
+  DOCKER_NETWORK: vibeid-network
+  APP_PORT: "3000"
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL || secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_DEMO_UNLOCKS_ENABLED: ${{ vars.NEXT_PUBLIC_DEMO_UNLOCKS_ENABLED || 'false' }}
+      NEXT_PUBLIC_ENABLE_VIBE_SAMPLE: ${{ vars.NEXT_PUBLIC_ENABLE_VIBE_SAMPLE || 'false' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate build-time public env
+        run: |
+          set -euo pipefail
+          test -n "$NEXT_PUBLIC_SUPABASE_URL" || (echo "NEXT_PUBLIC_SUPABASE_URL is required" >&2; exit 1)
+          test -n "$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" || (echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY is required" >&2; exit 1)
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.VIBEID_ECR_PUSH_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ env.DOCKER_PLATFORM }}
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            BUILD_NODE_OPTIONS=${{ env.BUILD_NODE_OPTIONS }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ env.NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_DEMO_UNLOCKS_ENABLED=${{ env.NEXT_PUBLIC_DEMO_UNLOCKS_ENABLED }}
+            NEXT_PUBLIC_ENABLE_VIBE_SAMPLE=${{ env.NEXT_PUBLIC_ENABLE_VIBE_SAMPLE }}
+          tags: |
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:${{ github.sha }}
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:latest
+          cache-from: type=gha,scope=vibeid-prod
+          cache-to: type=gha,scope=vibeid-prod,mode=max
+
+  deploy-to-ec2:
+    name: Deploy to EC2 via SSM
+    runs-on: ubuntu-24.04
+    needs: build-and-push
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://vibeid.co
+    env:
+      HOST_PORT: ${{ vars.VIBEID_HOST_PORT || '3000' }}
+      ENV_FILE: ${{ vars.VIBEID_ENV_FILE || '/home/ubuntu/vibeid/.env.production' }}
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.VIBEID_SSM_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Send deployment command via SSM
+        id: ssm-deploy
+        env:
+          INSTANCE_ID: ${{ secrets.VIBEID_EC2_INSTANCE_ID || secrets.EC2_INSTANCE_ID }}
+          REGISTRY: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          IMAGE_URI: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:latest
+        run: |
+          set -euo pipefail
+          test -n "$INSTANCE_ID" || (echo "VIBEID_EC2_INSTANCE_ID or EC2_INSTANCE_ID is required" >&2; exit 1)
+
+          SSM_COMMANDS=$(
+            cat <<EOF
+          ["#!/bin/bash","set -euxo pipefail","echo \"[1/6] Authenticating with ECR...\"","aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}","echo \"[2/6] Pulling latest image from ECR...\"","docker pull ${IMAGE_URI}","echo \"[3/6] Stopping old container...\"","docker stop ${CONTAINER_NAME} || true","docker rm ${CONTAINER_NAME} || true","echo \"[4/6] Ensuring docker network exists...\"","docker network inspect ${DOCKER_NETWORK} >/dev/null 2>&1 || docker network create ${DOCKER_NETWORK}","echo \"[5/6] Starting new container...\"","docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${HOST_PORT}:${APP_PORT} --env-file ${ENV_FILE} --network ${DOCKER_NETWORK} ${IMAGE_URI}","echo \"[6/6] Cleaning up old images...\"","docker image prune -af --filter \"until=24h\"","echo \"Deployment completed successfully\"","docker ps | grep ${CONTAINER_NAME}"]
+          EOF
+          )
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy vibeid from ECR (triggered by GitHub Actions)" \
+            --parameters "commands=$SSM_COMMANDS" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
+
+          if [ -z "$COMMAND_ID" ] || [ "$COMMAND_ID" = "None" ] || [ "$COMMAND_ID" = "null" ]; then
+            echo "ERROR: Failed to get SSM command id." >&2
+            exit 1
+          fi
+
+          echo "SSM command id: $COMMAND_ID"
+          echo "command_id=$COMMAND_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for deployment completion
+        env:
+          INSTANCE_ID: ${{ secrets.VIBEID_EC2_INSTANCE_ID || secrets.EC2_INSTANCE_ID }}
+          COMMAND_ID: ${{ steps.ssm-deploy.outputs.command_id }}
+        run: |
+          set -euo pipefail
+          echo "Waiting for SSM command $COMMAND_ID to complete..."
+
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Get deployment logs
+        if: ${{ always() && steps.ssm-deploy.outputs.command_id != '' }}
+        env:
+          INSTANCE_ID: ${{ secrets.VIBEID_EC2_INSTANCE_ID || secrets.EC2_INSTANCE_ID }}
+          COMMAND_ID: ${{ steps.ssm-deploy.outputs.command_id }}
+        run: |
+          echo "=== Deployment Command Output ==="
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'StandardOutputContent' \
+            --output text
+
+          echo ""
+          echo "=== Deployment Command Errors (if any) ==="
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'StandardErrorContent' \
+            --output text || true
+
+      - name: Verify deployment
+        env:
+          INSTANCE_ID: ${{ secrets.VIBEID_EC2_INSTANCE_ID || secrets.EC2_INSTANCE_ID }}
+        run: |
+          VERIFY_COMMANDS=$(
+            cat <<EOF
+          ["echo \"Container Status:\"","docker ps | grep ${CONTAINER_NAME} || echo \"ERROR: Container not running\"","echo \"\"","echo \"Recent Logs:\"","docker logs --tail 20 ${CONTAINER_NAME} 2>&1 || echo \"ERROR: Cannot get logs\""]
+          EOF
+          )
+          VERIFY_CMD=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Verify vibeid deployment" \
+            --parameters "commands=$VERIFY_COMMANDS" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
+
+          sleep 5
+
+          aws ssm get-command-invocation \
+            --command-id "$VERIFY_CMD" \
+            --instance-id "$INSTANCE_ID" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'StandardOutputContent' \
+            --output text
