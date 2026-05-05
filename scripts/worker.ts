@@ -10,13 +10,14 @@ import {
   markJobRunning,
   resetStaleRunningJobs,
   saveAnalyzeResult,
+  saveAtsResult,
   saveOptimizedResume,
 } from '../lib/backend-store'
 import { getBoss } from '../lib/db'
 import { AI_QUEUE_NAMES, enqueueAiJob } from '../lib/job-queue'
 import { logError, logInfo, logWarn } from '../lib/logger'
 import { optimizeResumeJobRequestSchema } from '../lib/validation'
-import { runResumeAnalysis } from '../app/api/analyze/route'
+import { runAtsAnalysis, runMentorAdvice } from '../app/api/analyze/route'
 import { runResumeOptimization } from '../app/api/optimize-resume/route'
 
 loadEnvConfig(process.cwd())
@@ -48,18 +49,28 @@ async function processAnalyze(jobId: string) {
   const artifact = await getArtifactForWorker(job.artifactId)
   if (!artifact) throw new Error(`Artifact ${job.artifactId} not found`)
 
-  const result = await withJobHeartbeat(jobId, 'analyzing', async () => {
-    return runResumeAnalysis({
-      resumeText: artifact.resumeText,
-      targetRole: artifact.targetRole,
-      jobDescription: artifact.jobDescription,
-    })
+  const input = {
+    resumeText: artifact.resumeText,
+    targetRole: artifact.targetRole,
+    jobDescription: artifact.jobDescription,
+  }
+
+  const [atsPhase, mentorPhase] = await withJobHeartbeat(jobId, 'ats-scoring', async () => {
+    // Phase 1: ATS + competition — save immediately so the score is available for display
+    const ats = await runAtsAnalysis(input)
+    await saveAtsResult(job.artifactId, ats)
+
+    // Phase 2: KB lookup + mentor advice
+    await heartbeatJob(jobId, 'mentor-advising')
+    const mentor = await runMentorAdvice(input, ats)
+    return [ats, mentor] as const
   })
 
-  await saveAnalyzeResult(job.artifactId, result)
+  const fullResult = { ...atsPhase, ...mentorPhase }
+  await saveAnalyzeResult(job.artifactId, fullResult)
   await completeJob(jobId, 'completed', {
     artifactId: job.artifactId,
-    ...result,
+    ...fullResult,
   })
 }
 

@@ -8,7 +8,7 @@ import type {
   AnalyzeRequest,
   OptimizeResumeRequest,
 } from './validation'
-import type { AnalyzeResultPayload, ResumeArtifactPayload } from './types'
+import type { AnalyzeResultPayload, AtsPhaseResult, ResumeArtifactPayload } from './types'
 
 export type AiJobKind = 'analyze' | 'optimize'
 export type AiJobStatus = 'queued' | 'running' | 'succeeded' | 'failed'
@@ -245,6 +245,25 @@ export async function saveAnalyzeResult(
       JSON.stringify(result.competition),
       JSON.stringify(result.mentorAdvice),
       JSON.stringify(result),
+    ]
+  )
+}
+
+export async function saveAtsResult(
+  artifactId: string,
+  ats: AtsPhaseResult
+): Promise<void> {
+  await query(
+    `
+      update public.resume_artifacts
+      set ats_result = $2,
+          competition = $3
+      where id = $1
+    `,
+    [
+      artifactId,
+      JSON.stringify(ats.atsResult ?? null),
+      JSON.stringify(ats.competition),
     ]
   )
 }

@@ -15,7 +15,7 @@ import {
 } from '@/lib/rate-limit'
 import { getAuthenticatedUser } from '@/lib/supabase/server'
 import { analyzeRequestSchema, type AnalyzeRequest } from '@/lib/validation'
-import type { AnalyzeResultPayload } from '@/lib/types'
+import type { AnalyzeResultPayload, AtsPhaseResult, MentorPhaseResult } from '@/lib/types'
 
 export const runtime = 'nodejs'
 
@@ -158,6 +158,32 @@ overall_rate = headcount / point_estimate × 100
 
 Return ONLY valid JSON, no markdown, no extra text.`
 
+// ── Unlocked mentor system prompt (Sonnet — full quality, 1 unlocked mentor) ──
+const UNLOCKED_MENTOR_SYSTEM = `你是AI简历导师平台的导师建议引擎。你拥有来自顶级公司导师的真实辅导知识库。
+
+你的任务：以指定导师的视角，针对学生简历给出3条分层建议，并生成整体评价和薪资预测。
+
+## 核心规则
+- highlightTags: 必须从credibility_signal中提取3-4个精简标签（如"NYU金融硕士"、"500+预测模型"、"FinTech独角兽"）
+- careerPath: 必须从career_path字段提取职业路径（如"广告Agency → 快消品牌(百威) → 科技大厂(Amazon)"），career_path为空则null
+- companyLogo: 必须是公司英文名小写（如"amazon"、"google"、"oportun"）
+
+## 建议格式（每条advice严格按以下结构）
+每条advice必须包含：
+1. priority: "P0-必改" / "P1-重要" / "P2-建议"
+2. problem: 导师指出的问题（清楚标出问题是什么）
+3. mentorPerspective: 导师筛选策略 — 先用1句话说明该公司/行业对此项的筛选标准或淘汰逻辑，再用「」引用知识库中导师原话作为佐证。整段要读起来像一个连贯的专业判断，不要直接把quote当主体。
+4. studentStatus: 学生的现状（从简历中详细指出具体位置和内容，引用简历原文）
+5. suggestion: 详细且具体的改写建议（给出改写后的文字示例，不是笼统建议）
+6. example: (可选) 改写后的bullet示例文字
+
+## resumeHighlight（必须生成）
+- intro: "在{公司名}中，此类简历最容易脱颖而出..."
+- points: 2-3条具体的吸睛策略（必须基于知识库中该导师的真实建议和before_after案例，不可编造）
+
+素材必须严格来源于提供的知识库（segments、before_after案例），不要编造导师未说过的话。
+返回严格JSON，不要代码块`
+
 // ── Locked mentor teaser system prompt (Haiku) ──
 const LOCKED_MENTOR_SYSTEM = `你是简历顾问平台的导师预览生成器。根据学生简历和目标岗位，为3位锁定导师生成简短但专业的建议预览。
 
@@ -169,19 +195,23 @@ const LOCKED_MENTOR_SYSTEM = `你是简历顾问平台的导师预览生成器�
 - 建议要有实质性（指出真实问题），但solution留有悬念
 - 返回严格JSON，无代码块`
 
-export async function runResumeAnalysis({
+function fmtMentor(m: MentorRow, idx: number) {
+  return `导师${idx}: ${m.name} | ${m.title} @ ${m.company}\n  权威背书: ${m.credibility_signal}\n  行业专长: ${m.industry_expertise}\n  擅长辅导: ${m.coaching_positions || '通用'}\n  职业路径: ${m.career_path || ''}`
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Phase 1 — ATS Scoring + Competition Estimate
+// ══════════════════════════════════════════════════════════════════════════════
+export async function runAtsAnalysis({
   resumeText,
   targetRole,
   jobDescription,
-}: AnalyzeRequest): Promise<AnalyzeResultPayload> {
-    const jdSection = jobDescription
-      ? `\n\nJob Description (use this to extract keywords and match against resume):\n${toPromptBlock('job_description', jobDescription, 3000)}`
-      : ''
+}: AnalyzeRequest): Promise<AtsPhaseResult> {
+  const jdSection = jobDescription
+    ? `\n\nJob Description (use this to extract keywords and match against resume):\n${toPromptBlock('job_description', jobDescription, 3000)}`
+    : ''
 
-    // ══════════════════════════════════════════
-    // STEP 1: ATS Scoring + Competition Estimate (parallel)
-    // ══════════════════════════════════════════
-    const atsPrompt = `${toPromptBlock('resume_text', resumeText, 4000)}
+  const atsPrompt = `${toPromptBlock('resume_text', resumeText, 4000)}
 
 Target role: ${toPromptLine(targetRole, 120)}${jdSection}
 ${jobDescription ? `
@@ -212,7 +242,7 @@ Return the ATS analysis as JSON:
   "strengths": ["string"]
 }`
 
-    const competitionPrompt = `Job title: ${toPromptLine(targetRole, 120)}
+  const competitionPrompt = `Job title: ${toPromptLine(targetRole, 120)}
 
 Return JSON:
 {
@@ -224,134 +254,112 @@ Return JSON:
   "competition_tag": "<tag>"
 }`
 
-    // ══════════════════════════════════════════
-    // Run ATS + Competition + DB queries ALL in parallel
-    // ══════════════════════════════════════════
-    // ATS (Sonnet, 2048 tokens) + Competition (Haiku, 1024 tokens) + DB — all parallel
-    const [atsResponse, competitionResponse, dbData] = await Promise.all([
-      callClaude(`${ATS_SYSTEM_PROMPT}\n\n${USER_CONTENT_GUARDRAIL}`, atsPrompt, 0, {
-        maxTokens: 2048,
-        cacheSystem: true,
-        timeoutMs: 60_000,
-      }),
-      callClaude(`${COMPETITION_SYSTEM_PROMPT}\n\n${USER_CONTENT_GUARDRAIL}`, competitionPrompt, 0, {
-        model: 'claude-haiku-4-5-20251001',
-        maxTokens: 1024,
-        timeoutMs: 30_000,
-      }),
-      getMentorKnowledgeBase({ targetRole, jobDescription }),
-    ])
+  const [atsResponse, competitionResponse] = await Promise.all([
+    callClaude(`${ATS_SYSTEM_PROMPT}\n\n${USER_CONTENT_GUARDRAIL}`, atsPrompt, 0, {
+      maxTokens: 2048,
+      cacheSystem: true,
+      timeoutMs: 60_000,
+    }),
+    callClaude(`${COMPETITION_SYSTEM_PROMPT}\n\n${USER_CONTENT_GUARDRAIL}`, competitionPrompt, 0, {
+      model: 'claude-haiku-4-5-20251001',
+      maxTokens: 1024,
+      timeoutMs: 30_000,
+    }),
+  ])
 
-    let atsResult
-    try {
-      atsResult = JSON.parse(atsResponse)
-    } catch {
-      const match = atsResponse.match(/\{[\s\S]*\}/)
-      if (match) atsResult = JSON.parse(match[0])
-      else throw new Error('Failed to parse ATS response')
-    }
+  let atsResult
+  try {
+    atsResult = JSON.parse(atsResponse)
+  } catch {
+    const match = atsResponse.match(/\{[\s\S]*\}/)
+    if (match) atsResult = JSON.parse(match[0])
+    else throw new Error('Failed to parse ATS response')
+  }
 
-    // Null-safe defaults for ATS result fields
-    const atsScores = atsResult?.scores || {}
-    const safeATS = {
-      final_score: atsResult?.final_score ?? 50,
-      passed: atsResult?.passed ?? false,
-      keyword_match: atsScores.keyword_match?.raw ?? 50,
-      skills_match: atsScores.skills_match?.raw ?? 50,
-      format_compliance: atsScores.format_compliance?.raw ?? 70,
-      experience_match: atsScores.experience_match?.raw ?? 50,
-      top_issues: atsResult?.top_issues || [],
-    }
+  let competitionResult
+  try {
+    competitionResult = JSON.parse(competitionResponse)
+  } catch {
+    const match = competitionResponse.match(/\{[\s\S]*\}/)
+    if (match) competitionResult = JSON.parse(match[0])
+    else throw new Error('Failed to parse competition response')
+  }
 
-    let competitionResult
-    try {
-      competitionResult = JSON.parse(competitionResponse)
-    } catch {
-      const match = competitionResponse.match(/\{[\s\S]*\}/)
-      if (match) competitionResult = JSON.parse(match[0])
-      else throw new Error('Failed to parse competition response')
-    }
+  return {
+    atsScore: atsResult?.final_score ?? 50,
+    atsResult,
+    competition: competitionResult || {
+      job_title: targetRole,
+      base_role: 1000,
+      base_role_reasoning: '',
+      estimated_applicants: 1000,
+      applicant_range: '500-1500',
+      competition_tag: '中等竞争',
+    },
+  }
+}
 
-    const { allMentors, universalSegments, specificSegments, beforeAfter } = dbData
+// ══════════════════════════════════════════════════════════════════════════════
+// Phase 2 — Mentor Advice (KB lookup + Claude)
+// ══════════════════════════════════════════════════════════════════════════════
+export async function runMentorAdvice(
+  { resumeText, targetRole, jobDescription }: AnalyzeRequest,
+  { atsResult }: AtsPhaseResult
+): Promise<MentorPhaseResult> {
+  // Derive null-safe ATS values for prompt context
+  const atsScores = atsResult?.scores || {}
+  const safeATS = {
+    final_score: atsResult?.final_score ?? 50,
+    passed: atsResult?.passed ?? false,
+    keyword_match: atsScores.keyword_match?.raw ?? 50,
+    skills_match: atsScores.skills_match?.raw ?? 50,
+    format_compliance: atsScores.format_compliance?.raw ?? 70,
+    experience_match: atsScores.experience_match?.raw ?? 50,
+    top_issues: atsResult?.top_issues || [],
+  }
 
-    // ══════════════════════════════════════════
-    // STEP 3: Build context for mentor advice
-    // ══════════════════════════════════════════
-    const allSegments = [...universalSegments, ...specificSegments]
-    const segsByL1: Record<string, typeof allSegments> = {}
-    for (const seg of allSegments) {
-      const key = seg.L1 || '其他'
-      if (!segsByL1[key]) segsByL1[key] = []
-      segsByL1[key].push(seg)
-    }
-    const adviceKB = Object.entries(segsByL1).map(([cat, segs]) => {
-      const items = segs.map(s => {
-        let e = `  [${s.mentor_name}@${s.company}] ${s.topic}`
-        if (s.P_mentor) e += `\n    诊断: ${s.P_mentor}`
-        e += `\n    行动: ${s.A_action}`
-        if (s.I_insight) e += `\n    洞察: ${s.I_insight}`
-        if (s.H_hook) e += `\n    原话: "${s.H_hook.slice(0, 80)}"`
-        if (s.HR_os) e += `\n    HR视角: ${s.HR_os}`
-        return e
-      }).join('\n  ---\n')
-      return `【${cat}】\n${items}`
-    }).join('\n\n')
+  const { allMentors, universalSegments, specificSegments, beforeAfter } =
+    await getMentorKnowledgeBase({ targetRole, jobDescription })
 
-    const baExamples = beforeAfter.map(b => {
-      let e = `[${b.mentor_name}@${b.company}]`
-      if (b.issue_tags) e += ` 标签:${b.issue_tags}`
-      e += `\n  Before: ${b.before_text}\n  After: ${b.after_text}\n  原因: ${b.reason}`
+  // Build KB context strings
+  const allSegments = [...universalSegments, ...specificSegments]
+  const segsByL1: Record<string, typeof allSegments> = {}
+  for (const seg of allSegments) {
+    const key = seg.L1 || '其他'
+    if (!segsByL1[key]) segsByL1[key] = []
+    segsByL1[key].push(seg)
+  }
+  const adviceKB = Object.entries(segsByL1).map(([cat, segs]) => {
+    const items = segs.map(s => {
+      let e = `  [${s.mentor_name}@${s.company}] ${s.topic}`
+      if (s.P_mentor) e += `\n    诊断: ${s.P_mentor}`
+      e += `\n    行动: ${s.A_action}`
+      if (s.I_insight) e += `\n    洞察: ${s.I_insight}`
+      if (s.H_hook) e += `\n    原话: "${s.H_hook.slice(0, 80)}"`
+      if (s.HR_os) e += `\n    HR视角: ${s.HR_os}`
       return e
-    }).join('\n---\n')
+    }).join('\n  ---\n')
+    return `【${cat}】\n${items}`
+  }).join('\n\n')
 
-    // ── ATS issues summary for mentor context ──
-    const atsIssuesSummary = safeATS.top_issues
-      .map((i: { severity: string; issue: string }) => `[${i.severity}] ${i.issue}`)
-      .join('\n')
+  const baExamples = beforeAfter.map(b => {
+    let e = `[${b.mentor_name}@${b.company}]`
+    if (b.issue_tags) e += ` 标签:${b.issue_tags}`
+    e += `\n  Before: ${b.before_text}\n  After: ${b.after_text}\n  原因: ${b.reason}`
+    return e
+  }).join('\n---\n')
 
-    // ══════════════════════════════════════════
-    // STEP 4: Mentor Advice — 2 parallel calls
-    //   Call A (Sonnet, 3500 tokens): 1 unlocked mentor + overallJudgment + salary
-    //   Call B (Haiku,  2000 tokens): 3 locked mentor teasers
-    // ══════════════════════════════════════════
+  const atsIssuesSummary = safeATS.top_issues
+    .map((i: { severity: string; issue: string }) => `[${i.severity}] ${i.issue}`)
+    .join('\n')
 
-    // Pre-select top 4 mentors by relevance (already ranked in DB query)
-    const selectedMentors = allMentors.slice(0, 4)
-    const unlockedMentor = selectedMentors[0]
-    const lockedMentorList = selectedMentors.slice(1, 4)
+  // Pre-select top 4 mentors by relevance (already ranked in DB query)
+  const selectedMentors = allMentors.slice(0, 4)
+  const unlockedMentor = selectedMentors[0]
+  const lockedMentorList = selectedMentors.slice(1, 4)
 
-    function fmtMentor(m: MentorRow, idx: number) {
-      return `导师${idx}: ${m.name} | ${m.title} @ ${m.company}\n  权威背书: ${m.credibility_signal}\n  行业专长: ${m.industry_expertise}\n  擅长辅导: ${m.coaching_positions || '通用'}\n  职业路径: ${m.career_path || ''}`
-    }
-
-    // ── Call A system prompt (Sonnet — full quality, 1 unlocked mentor) ──────
-    const UNLOCKED_MENTOR_SYSTEM = `你是AI简历导师平台的导师建议引擎。你拥有来自顶级公司导师的真实辅导知识库。
-
-你的任务：以指定导师的视角，针对学生简历给出3条分层建议，并生成整体评价和薪资预测。
-
-## 核心规则
-- highlightTags: 必须从credibility_signal中提取3-4个精简标签（如"NYU金融硕士"、"500+预测模型"、"FinTech独角兽"）
-- careerPath: 必须从career_path字段提取职业路径（如"广告Agency → 快消品牌(百威) → 科技大厂(Amazon)"），career_path为空则null
-- companyLogo: 必须是公司英文名小写（如"amazon"、"google"、"oportun"）
-
-## 建议格式（每条advice严格按以下结构）
-每条advice必须包含：
-1. priority: "P0-必改" / "P1-重要" / "P2-建议"
-2. problem: 导师指出的问题（清楚标出问题是什么）
-3. mentorPerspective: 导师筛选策略 — 先用1句话说明该公司/行业对此项的筛选标准或淘汰逻辑，再用「」引用知识库中导师原话作为佐证。整段要读起来像一个连贯的专业判断，不要直接把quote当主体。
-4. studentStatus: 学生的现状（从简历中详细指出具体位置和内容，引用简历原文）
-5. suggestion: 详细且具体的改写建议（给出改写后的文字示例，不是笼统建议）
-6. example: (可选) 改写后的bullet示例文字
-
-## resumeHighlight（必须生成）
-- intro: "在{公司名}中，此类简历最容易脱颖而出..."
-- points: 2-3条具体的吸睛策略（必须基于知识库中该导师的真实建议和before_after案例，不可编造）
-
-素材必须严格来源于提供的知识库（segments、before_after案例），不要编造导师未说过的话。
-返回严格JSON，不要代码块`
-
-    // ── Call A user prompt ───────────────────────────────────────────────────
-    const unlockedUserPrompt = `## 简历
+  // ── Call A user prompt (Sonnet — 1 unlocked mentor + overallJudgment + salary) ──
+  const unlockedUserPrompt = `## 简历
 ${toPromptBlock('resume_text', resumeText, 2500)}
 
 ## 目标岗位: ${toPromptLine(targetRole, 120)}${jobDescription ? `
@@ -415,8 +423,8 @@ ${baExamples.slice(0, 1500)}
   }
 }`
 
-    // ── Call B user prompt (Haiku — brief teasers for 3 locked mentors) ──────
-    const lockedUserPrompt = `简历摘要：
+  // ── Call B user prompt (Haiku — brief teasers for 3 locked mentors) ──
+  const lockedUserPrompt = `简历摘要：
 ${toPromptBlock('resume_summary', resumeText, 600)}
 
 目标岗位: ${toPromptLine(targetRole, 120)}
@@ -446,78 +454,63 @@ ${lockedMentorList.map((m, i) => fmtMentor(m, i + 2)).join('\n\n')}
   ]
 }`
 
-    // ── Run both mentor calls in parallel ────────────────────────────────────
-    const [unlockedRaw, lockedRaw] = await Promise.all([
-      callClaude(`${UNLOCKED_MENTOR_SYSTEM}\n\n${USER_CONTENT_GUARDRAIL}`, unlockedUserPrompt, 0, {
-        maxTokens: 3500,
-        cacheSystem: true,
-        timeoutMs: 90_000,
-      }),
-      callClaude(`${LOCKED_MENTOR_SYSTEM}\n\n${USER_CONTENT_GUARDRAIL}`, lockedUserPrompt, 0, {
-        model: 'claude-haiku-4-5-20251001',
-        maxTokens: 2000,
-        timeoutMs: 45_000,
-      }),
-    ])
+  // Run both mentor calls in parallel
+  const [unlockedRaw, lockedRaw] = await Promise.all([
+    callClaude(`${UNLOCKED_MENTOR_SYSTEM}\n\n${USER_CONTENT_GUARDRAIL}`, unlockedUserPrompt, 0, {
+      maxTokens: 3500,
+      cacheSystem: true,
+      timeoutMs: 90_000,
+    }),
+    callClaude(`${LOCKED_MENTOR_SYSTEM}\n\n${USER_CONTENT_GUARDRAIL}`, lockedUserPrompt, 0, {
+      model: 'claude-haiku-4-5-20251001',
+      maxTokens: 2000,
+      timeoutMs: 45_000,
+    }),
+  ])
 
-    // ── Parse results ─────────────────────────────────────────────────────────
-    let unlockedResult: {
-      overallJudgment?: Record<string, unknown>
-      currentSalary?: string
-      topSalary?: string
-      topCompanies?: string[]
-      mentor?: Record<string, unknown>
-    }
-    try {
-      unlockedResult = JSON.parse(unlockedRaw)
-    } catch {
-      const match = unlockedRaw.match(/\{[\s\S]*\}/)
-      if (match) unlockedResult = JSON.parse(match[0])
-      else throw new Error('Failed to parse unlocked mentor response')
-    }
+  let unlockedResult: {
+    overallJudgment?: Record<string, unknown>
+    currentSalary?: string
+    topSalary?: string
+    topCompanies?: string[]
+    mentor?: Record<string, unknown>
+  }
+  try {
+    unlockedResult = JSON.parse(unlockedRaw)
+  } catch {
+    const match = unlockedRaw.match(/\{[\s\S]*\}/)
+    if (match) unlockedResult = JSON.parse(match[0])
+    else throw new Error('Failed to parse unlocked mentor response')
+  }
 
-    let lockedResult: { lockedMentors?: Record<string, unknown>[] }
-    try {
-      lockedResult = JSON.parse(lockedRaw)
-    } catch {
-      const match = lockedRaw.match(/\{[\s\S]*\}/)
-      if (match) lockedResult = JSON.parse(match[0])
-      else lockedResult = { lockedMentors: [] }  // graceful degradation
-    }
+  let lockedResult: { lockedMentors?: Record<string, unknown>[] }
+  try {
+    lockedResult = JSON.parse(lockedRaw)
+  } catch {
+    const match = lockedRaw.match(/\{[\s\S]*\}/)
+    if (match) lockedResult = JSON.parse(match[0])
+    else lockedResult = { lockedMentors: [] }
+  }
 
-    // ── Combine into final mentorResult ──────────────────────────────────────
-    const mentorResult = {
-      overallJudgment: (unlockedResult?.overallJudgment as AnalyzeResultPayload['overallJudgment']) || { strengths: '', coreIssues: '', mentorCount: 4 },
-      currentSalary: unlockedResult?.currentSalary || '未知',
-      topSalary: unlockedResult?.topSalary || '未知',
-      topCompanies: unlockedResult?.topCompanies || [],
-      mentorAdvice: [
-        ...(unlockedResult?.mentor ? [{ ...unlockedResult.mentor, isLocked: false }] : []),
-        ...(lockedResult?.lockedMentors || []).map(m => ({ ...m, isLocked: true })),
-      ] as AnalyzeResultPayload['mentorAdvice'],
-    }
+  return {
+    overallJudgment: (unlockedResult?.overallJudgment as unknown as MentorPhaseResult['overallJudgment']) || { strengths: '', coreIssues: '', mentorCount: 4 },
+    currentSalary: unlockedResult?.currentSalary || '未知',
+    topSalary: unlockedResult?.topSalary || '未知',
+    topCompanies: unlockedResult?.topCompanies || [],
+    mentorAdvice: [
+      ...(unlockedResult?.mentor ? [{ ...unlockedResult.mentor, isLocked: false }] : []),
+      ...(lockedResult?.lockedMentors || []).map(m => ({ ...m, isLocked: true })),
+    ] as MentorPhaseResult['mentorAdvice'],
+  }
+}
 
-    // ══════════════════════════════════════════
-    // STEP 5: Return combined result
-    // ══════════════════════════════════════════
-    return {
-      atsScore: safeATS.final_score,
-      atsResult,
-      overallJudgment: mentorResult.overallJudgment,
-      currentSalary: mentorResult.currentSalary,
-      topSalary: mentorResult.topSalary,
-      topCompanies: mentorResult.topCompanies,
-      competition:
-        competitionResult || {
-          job_title: targetRole,
-          base_role: 1000,
-          base_role_reasoning: '',
-          estimated_applicants: 1000,
-          applicant_range: '500-1500',
-          competition_tag: '中等竞争',
-        },
-      mentorAdvice: mentorResult.mentorAdvice,
-    }
+// ══════════════════════════════════════════════════════════════════════════════
+// Orchestrator — composes ATS + Mentor phases (used by route handler directly)
+// ══════════════════════════════════════════════════════════════════════════════
+export async function runResumeAnalysis(input: AnalyzeRequest): Promise<AnalyzeResultPayload> {
+  const atsPhase = await runAtsAnalysis(input)
+  const mentorPhase = await runMentorAdvice(input, atsPhase)
+  return { ...atsPhase, ...mentorPhase }
 }
 
 export async function POST(request: NextRequest) {

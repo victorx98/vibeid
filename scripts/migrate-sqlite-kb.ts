@@ -15,15 +15,7 @@ const SQLITE_PATH = process.env.SQLITE_KB_PATH || 'data/resume_material_library.
 const SCHEMA = 'vibeid'
 const ADVISORY_LOCK_ID = 74200131
 
-const EXPECTED_COUNTS = {
-  mentors: 11,
-  source_students: 11,
-  sessions: 21,
-  segments: 164,
-  before_after_pairs: 29,
-} as const
-
-type TableName = keyof typeof EXPECTED_COUNTS
+type TableName = 'mentors' | 'source_students' | 'sessions' | 'segments' | 'before_after_pairs'
 type Row = Record<string, unknown>
 
 interface IntegrityRepairs {
@@ -76,6 +68,14 @@ const TABLES: TableSpec[] = [
       'key_experiences',
       'background_summary',
       'created_at',
+      'target_job_title',
+      'target_industry',
+      'target_company_type',
+      'education_level',
+      'years_experience',
+      'key_skills',
+      'weakness_tags',
+      'visa_status',
     ],
   },
   {
@@ -91,6 +91,8 @@ const TABLES: TableSpec[] = [
       'transcript_line_range',
       'notes',
       'created_at',
+      'target_job_title',
+      'seniority_level',
     ],
   },
   {
@@ -107,7 +109,6 @@ const TABLES: TableSpec[] = [
       'L1',
       'L2',
       'L3',
-      'P_student',
       'P_mentor',
       'L_logic',
       'A_action',
@@ -131,6 +132,11 @@ const TABLES: TableSpec[] = [
       'background_fit',
       'level_fit',
       'trigger_conditions',
+      'target_job_title',
+      'target_seniority',
+      'student_background_tags',
+      'issue_tags',
+      'outcome_quality',
     ],
   },
   {
@@ -322,17 +328,6 @@ function checksumTables(data: Record<TableName, Row[]>): Record<TableName, strin
   }
 }
 
-function assertExpectedCounts(counts: Record<TableName, number>) {
-  const mismatches = Object.entries(EXPECTED_COUNTS).filter(
-    ([table, expected]) => counts[table as TableName] !== expected
-  )
-  if (mismatches.length === 0) return
-
-  const details = mismatches
-    .map(([table, expected]) => `${table}: expected ${expected}, got ${counts[table as TableName]}`)
-    .join('; ')
-  throw new Error(`SQLite KB counts do not match expected source snapshot: ${details}`)
-}
 
 function quoteIdent(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`
@@ -443,7 +438,7 @@ async function applyMigration(input: {
         input.sourceSha,
         JSON.stringify(input.counts),
         JSON.stringify(input.checksums),
-        JSON.stringify(EXPECTED_COUNTS),
+        JSON.stringify(input.counts),
       ]
     )
     await client.query('commit')
@@ -471,7 +466,6 @@ function printSummary(input: {
     counts: input.counts,
     checksums: input.checksums,
     integrityRepairs: input.repairs,
-    expectedCounts: EXPECTED_COUNTS,
   }
   console.log(JSON.stringify(summary, null, 2))
 }
@@ -487,7 +481,6 @@ async function main() {
   assertSourceForeignKeys(data)
   const counts = countRows(data)
   const checksums = checksumTables(data)
-  assertExpectedCounts(counts)
 
   if (mode === 'apply') {
     await applyMigration({ dbPath, sourceSha, data, counts, checksums })

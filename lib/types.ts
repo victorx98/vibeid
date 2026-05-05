@@ -44,6 +44,20 @@ export interface AdviceFeedback {
   helpful: boolean | null     // true = helpful, false = not helpful, null = no feedback yet
 }
 
+export interface AtsPhaseResult {
+  atsScore: number
+  atsResult: ATSResult
+  competition: CompetitionEstimate
+}
+
+export interface MentorPhaseResult {
+  overallJudgment: OverallJudgment
+  currentSalary: string
+  topSalary: string
+  topCompanies: string[]
+  mentorAdvice: MentorAdvice[]
+}
+
 export interface AnalyzeResultPayload {
   atsScore: number
   atsResult?: ATSResult
