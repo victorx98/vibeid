@@ -19,8 +19,9 @@ import type { AnalyzeResultPayload, AtsPhaseResult, MentorPhaseResult } from '@/
 
 export const runtime = 'nodejs'
 
-// ── ATS Strict Scoring System Prompt ──
-const ATS_SYSTEM_PROMPT = `You are an ATS (Applicant Tracking System) strict scoring engine. When given a resume, you analyze it and return a structured ATS score using the strict scoring methodology defined below.
+// ── ATS LEGACY Strict Scoring System Prompt (DEPRECATED - kept for reference) ──
+/*
+const ATS_SYSTEM_PROMPT_LEGACY = `You are an ATS (Applicant Tracking System) strict scoring engine. When given a resume, you analyze it and return a structured ATS score using the strict scoring methodology defined below.
 
 ## SCORING METHODOLOGY: STRICT MODE
 
@@ -98,65 +99,135 @@ Default threshold: 70. For FAANG/MBB/bulge bracket: 75.
 6. Employment gaps must be explicitly explained to avoid penalty.
 
 Return ONLY valid JSON, no markdown, no extra text.`
+*/
 
-// ── Competition Estimator System Prompt ──
-const COMPETITION_SYSTEM_PROMPT = `You are a US entry-level job market competition estimator. When given a job title, calculate the estimated number of applicants using the formula below.
+/*
+// ── ATS LEGACY Scoring System Prompt (2025 INITIAL VERSION - DEPRECATED) ──
+const ATS_SYSTEM_PROMPT_LEGACY = `你是一套嚴格口徑的 ATS 簡歷評分系統。你的核心任務是僅根據簡歷中可見的文本信息，對其進行穩定、一致、可複核的 100 分制評分。
 
-## FORMULA
-Estimated Applicants = base_role × tier_mult × city_mult × time_mult(days) × salary_mult × 1.4
+【核心執行準則】
+1. 嚴禁推斷：不得虛構任何未寫出的數字、地點、成果、職責或項目規模。
+2. 去品牌化：嚴禁因學校名氣、公司品牌或個人直覺而額外加分。
+3. 保守一致：若信息不足或在分檔間猶豫，必須優先選擇較低分檔。
+4. 無 JD 處理：若未提供崗位 JD，標註為「通用方向估算」，維度 D 評分不得超過 13 分。
 
-The 1.4 is a fixed Entry Level multiplier (entry-level roles receive 38–45% more applications than mid-level equivalents).
+【內容證據等級 (C 維度判分依據)】
+- L4 強證據：動作+結果+量化+範圍（如：分析 12 家公司，提升 15% 效率）
+- L3 中強證據：有動作與結果，但量化不足
+- L2 弱證據：僅有職責描述（如 researched, prepared），結果不明
+- L1 極弱證據：空泛詞彙（如 hard-working, helped with tasks）
 
-## STEP 1 — INFER base_role FROM JOB TITLE
-Reason about the job title using three factors:
+【評分維度與細則】
 
-**Factor A: Role demand breadth** — How many different types of companies hire for this role?
-- Almost every company → high base (1,800–2,500)
-- Most mid-to-large companies → medium base (1,200–1,800)
-- Specialist or niche role → low base (600–1,200)
+A. 解析與格式兼容性 (20分)
+  - 頁數 (4分)：1 頁=4；經驗豐富且結構清晰的 2 頁=2-3；無必要超過 2 頁=0-1
+  - 排版 (6分)：單欄、清晰分區=5-6；雙欄或有文本框/圖形=0-2
+  - 字體 (4分)：統一、合理=4；明顯不一=0-1
+  - 日期 (3分)：寫法一致、時間線清晰=3；混亂=0
+  - 命名 (3分)：專業命名與正式感=3；不專業=0
 
-**Factor B: Entry-level candidate pool size**
-- Very large pool (business, CS, economics majors) → add 400–600
-- Medium pool (specific major or bootcamp) → add 200–400
-- Small pool (niche certification or rare degree) → add 0–200
+B. 信息完整性與結構組織 (20分)
+  - 核心板塊 (8分)：教育、經歷、項目、技能均齊全=8；缺關鍵板塊=0-4
+  - 地點信息 (4分)：大多數有地點=4；多數缺失=0-1
+  - Bullet 密度 (4分)：核心經歷有足夠支撐=4；證據過少=0-1
+  - 技能分組 (4分)：按類別組織易掃讀=4；混亂堆疊=0-1
 
-**Factor C: Online application friction**
-- One-click / easy apply common → add 300–500
-- Standard resume + cover letter → add 100–300
-- Portfolio / test / coding challenge required → add 0–100
+C. 內容質量與成果表達 (35分)
+  - 動作動詞 (5分)：使用明確強動詞=4-5；大量弱動詞=0-1
+  - 結果導向 (10分)：≥50% bullet 有結果=8-10；<15%=0-1
+  - 量化成果 (10分)：≥50% bullet 含數字/規模=8-10；<15%=0-1
+  - 證據具體性 (5分)：分析對象與邊界清楚=4-5；普遍籠統=0-1
+  - 表達專業度 (5分)：簡潔專業無空話=4-5；不自然或冗長=0-1
 
-base_role = Factor A midpoint + Factor B add-on + Factor C add-on
+D. 崗位關鍵詞與匹配性 (15分)
+  - 核心術語 (8分)：覆蓋充分自然=6-8；不足=0-2
+  - 工具方法 (4分)：工具、模型與方向一致=3-4；明顯不足=0
+  - 方向一致性 (3分)：經歷項目共同指向目標=3；方向分散=0
+  [注意：若無 JD，此維度最多 13 分]
 
-Reference anchors (not a lookup table):
-- Marketing Coordinator → ~1,400
-- Software Engineer (new grad) → ~2,200
-- Investment Banking Analyst → ~1,500
-- Product Manager (APM) → ~2,500
-- UX Designer → ~900
-- Supply Chain Analyst → ~1,200
+E. 最終投遞完成度 (10分)
+  - 拼寫語法 (4分)：無明顯錯誤=4；多處錯誤=0-1
+  - 重複問題 (2分)：無重複、命名統一=2
+  - 聯繫信息 (2分)：完整、鏈接清晰=2
+  - 整體成熟度 (2分)：接近正式投遞稿=2
 
-## STEP 2 — APPLY MULTIPLIERS
-Use defaults when parameters are unknown:
-- tier_mult: T1(FAANG/MBB)=4.0, T2(well-known public)=2.5, T3(mid-size)=1.4, T4(startup)=0.7, default=2.5
-- city_mult: NYC=2.0, SF/Bay=1.9, Remote=1.6, Chicago/Boston/Seattle=1.5, LA/Austin/DC=1.3, Denver/Atlanta/Miami=1.0, Other=0.7, default=1.3
-- time_mult: 1-3d=0.25, 4-7d=0.55, 8-14d=1.00, 15-21d=1.40, 22-30d=1.65, 31-45d=1.85, 46+=2.05, default=1.00
-- salary_mult: Above 15%+=1.4, At market=1.1, Below 15%=0.8, Significantly below=0.5, default=1.1
+【判定優先級】
+1. 證據強度
+2. 結果導向
+3. 結構完整性
+4. 關鍵詞一致性
+5. 語言流暢度
 
-## STEP 3 — CALCULATE
-point_estimate = base_role × tier_mult × city_mult × time_mult × salary_mult × 1.4 (round to nearest 50)
-low = point_estimate × 0.72 (round to nearest 50)
-high = point_estimate × 1.32 (round to nearest 50)
+【風險等級判定】
+- 低風險：≥70 且各維度無明顯短板
+- 中風險：60-69 或缺少 1 個核心板塊或量化極低
+- 高風險：<60 或缺多個板塊或方向分散
 
-## STEP 4 — COMPETITION TAG
-headcount defaults to 2 if unknown.
-overall_rate = headcount / point_estimate × 100
-- <1% → "极度激烈"
-- 1–3% → "非常激烈"
-- 3–6% → "激烈"
-- 6–12% → "中等竞争"
-- 12%+ → "竞争较低"
+【輸出格式要求】
+返回 ONLY 有效 JSON，無代碼塊、無 markdown：
+{
+  "ats_score": <整數>,
+  "risk_level": "低|中|高",
+  "scoring_context": "是否提供 JD；若無則標註「通用方向估算」",
+  "dimension_scores": {
+    "A_format_parsing": <0-20>,
+    "B_info_completeness": <0-20>,
+    "C_content_quality": <0-35>,
+    "D_keyword_matching": <0-15>,
+    "E_delivery_readiness": <0-10>
+  },
+  "top_issues": [
+    { "rank": 1, "severity": "high|medium|low", "issue": "string", "impact": "string" },
+    { "rank": 2, "severity": "high|medium|low", "issue": "string", "impact": "string" },
+    { "rank": 3, "severity": "high|medium|low", "issue": "string", "impact": "string" },
+    { "rank": 4, "severity": "high|medium|low", "issue": "string", "impact": "string" }
+  ],
+  "priority_improvements": [
+    { "rank": 1, "action": "string", "expected_gain": "string" },
+    { "rank": 2, "action": "string", "expected_gain": "string" },
+    { "rank": 3, "action": "string", "expected_gain": "string" }
+  ],
+  "score_improvement_range": "如：補全量化信息後預計提升 4-7 分",
+  "strengths": ["string"]
+}`;
+*/
 
-Return ONLY valid JSON, no markdown, no extra text.`
+// ── ATS NEW Scoring System Prompt (2025 OPTIMIZED VERSION) ──
+const ATS_SYSTEM_PROMPT = `你是一套严格口径的 ATS 简历评分系统。你的任务是仅根据简历中可见的文本信息，对该简历进行一致性评分。
+
+请严格遵守以下规则：
+1. 不得虚构任何数字、地点、成果、职责或项目细节。
+2. 不得因为学校名气、公司品牌或主观印象而额外加分。
+3. 若未提供具体岗位 JD，必须标注为"通用方向估算"，并按简历最明显的目标方向保守评分。
+4. 评分采用 100 分制，结构如下：A 解析与格式兼容性 20 分；B 信息完整性与结构组织 20 分；C 内容质量与成果表达 35 分；D 岗位关键词与 ATS 匹配性 15 分；E 最终投递完成度 10 分。
+5. 如果信息不足，请按较低分档处理，不做正向推断。
+
+请按以下结构输出（ONLY JSON，无代码块，精简格式）：
+{
+  "ats_score": <整数 0-100>,
+  "scoring_context": "是否提供 JD；若无，则写'通用方向估算'",
+  "dimension_scores": {
+    "A_format_parsing": <0-20>,
+    "B_info_completeness": <0-20>,
+    "C_content_quality": <0-35>,
+    "D_keyword_matching": <0-15>,
+    "E_delivery_readiness": <0-10>
+  },
+  "top_issues": [
+    { "rank": 1, "severity": "high|medium|low", "issue": "string", "impact": "string" },
+    { "rank": 2, "severity": "high|medium|low", "issue": "string", "impact": "string" }
+  ],
+  "priority_improvements": [
+    { "rank": 1, "action": "string", "expected_gain": "string" },
+    { "rank": 2, "action": "string", "expected_gain": "string" }
+  ],
+  "strengths": ["string"]
+}`
+
+// ── Competition Estimator System Prompt (DISABLED) ──
+/*
+const COMPETITION_SYSTEM_PROMPT = `...`
+*/
 
 // ── Unlocked mentor system prompt (Sonnet — full quality, 1 unlocked mentor) ──
 const UNLOCKED_MENTOR_SYSTEM = `你是AI简历导师平台的导师建议引擎。你拥有来自顶级公司导师的真实辅导知识库。
@@ -199,6 +270,40 @@ function fmtMentor(m: MentorRow, idx: number) {
   return `导师${idx}: ${m.name} | ${m.title} @ ${m.company}\n  权威背书: ${m.credibility_signal}\n  行业专长: ${m.industry_expertise}\n  擅长辅导: ${m.coaching_positions || '通用'}\n  职业路径: ${m.career_path || ''}`
 }
 
+// ── Risk Level Calculator ──
+function calculateRiskLevel(atsScore: number, dimensionScores?: any): '低' | '中' | '高' {
+  // 低風險: ≥90 分 且各維度無明顯短板
+  if (atsScore >= 90) {
+    if (dimensionScores) {
+      const minDimension = Math.min(
+        dimensionScores.A_format_parsing || 0,
+        dimensionScores.B_info_completeness || 0,
+        dimensionScores.C_content_quality || 0,
+        dimensionScores.D_keyword_matching || 0,
+        dimensionScores.E_delivery_readiness || 0
+      )
+      // Check if any dimension is significantly low (less than 40% of max)
+      const hasShortfall =
+        (dimensionScores.A_format_parsing || 0) < 8 ||
+        (dimensionScores.B_info_completeness || 0) < 8 ||
+        (dimensionScores.C_content_quality || 0) < 14 ||
+        (dimensionScores.D_keyword_matching || 0) < 6 ||
+        (dimensionScores.E_delivery_readiness || 0) < 4
+      if (!hasShortfall) return '低'
+    } else {
+      return '低'
+    }
+  }
+
+  // 高風險: <60 分 或缺多個板塊 或方向分散
+  if (atsScore < 60) {
+    return '高'
+  }
+
+  // 中風險: 60-89 分 或缺少 1 個核心板塊 或量化極低
+  return '中'
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Phase 1 — ATS Scoring + Competition Estimate
 // ══════════════════════════════════════════════════════════════════════════════
@@ -207,73 +312,89 @@ export async function runAtsAnalysis({
   targetRole,
   jobDescription,
 }: AnalyzeRequest): Promise<AtsPhaseResult> {
+  const hasJd = !!jobDescription
   const jdSection = jobDescription
-    ? `\n\nJob Description (use this to extract keywords and match against resume):\n${toPromptBlock('job_description', jobDescription, 3000)}`
+    ? `\n\n職位描述（用於提取關鍵詞並與簡歷匹配）:\n${toPromptBlock('job_description', jobDescription, 1500)}`
     : ''
 
-  const atsPrompt = `${toPromptBlock('resume_text', resumeText, 4000)}
+  const atsPrompt = `${toPromptBlock('resume_text', resumeText, 2500)}
 
-Target role: ${toPromptLine(targetRole, 120)}${jdSection}
-${jobDescription ? `
-IMPORTANT: A real Job Description has been provided above. You MUST:
-1. Extract the top 15-20 keywords from the JD (job title, required skills, tools, qualifications, responsibilities)
-2. Match EACH extracted keyword against the resume text
-3. Base your keyword_match score on actual JD keyword coverage, NOT generic industry keywords
-4. In top_issues, specifically list which JD keywords are MISSING from the resume
-5. This is岗位级别匹配, not 简历级别匹配 — be precise about what this specific JD demands
-` : ''}
-Return the ATS analysis as JSON:
+目標職位: ${toPromptLine(targetRole, 120)}${jdSection}
+${hasJd ? `
+重要提示：已提供實際職位描述。你必須：
+1. 從 JD 中提取 15-20 個核心關鍵詞（職位名稱、必需技能、工具、資格、職責）
+2. 逐一對應簡歷中的覆蓋情況
+3. 基於實際 JD 關鍵詞覆蓋率評分維度 D，而非通用行業關鍵詞
+4. 在 top_issues 中具體列出簡歷缺失的 JD 關鍵詞
+5. 這是「職位級別匹配」，不是「簡歷級別匹配」 — 精確指出此 JD 的具體要求
+` : `
+重要提示：未提供職位描述。按「通用方向估算」模式評分。
+- 維度 D（關鍵詞匹配）最多 13 分
+- 評估簡歷與目標職位「${targetRole}」的通用方向一致性
+`}
+返回 ONLY 有效 JSON，無代碼塊，精简格式：
 {
-  "candidate_name": "string or Unknown",
-  "inferred_role": "string",
-  "scores": {
-    "keyword_match":     { "weight": 0.50, "raw": <0-100>, "contribution": <number> },
-    "skills_match":      { "weight": 0.25, "raw": <0-100>, "contribution": <number> },
-    "format_compliance": { "weight": 0.10, "raw": <0-100>, "contribution": <number> },
-    "experience_match":  { "weight": 0.15, "raw": <0-100>, "contribution": <number> }
+  "ats_score": <整數>,
+  "scoring_context": "${hasJd ? '提供 JD' : '通用方向估算'}",
+  "dimension_scores": {
+    "A_format_parsing": <0-20>,
+    "B_info_completeness": <0-20>,
+    "C_content_quality": <0-35>,
+    "D_keyword_matching": <0-${hasJd ? '15' : '13'}>,
+    "E_delivery_readiness": <0-10>
   },
-  "base_score": <number>,
-  "penalties": [ { "reason": "string", "deduction": <negative number> } ],
-  "total_penalty": <number>,
-  "final_score": <number>,
-  "passing_threshold": 70,
-  "passed": <boolean>,
-  "top_issues": [ { "severity": "high|medium|low", "issue": "string", "recommendation": "string" } ],
+  "top_issues": [
+    { "rank": 1, "severity": "high|medium|low", "issue": "string", "impact": "string" },
+    { "rank": 2, "severity": "high|medium|low", "issue": "string", "impact": "string" }
+  ],
+  "priority_improvements": [
+    { "rank": 1, "action": "string", "expected_gain": "string" },
+    { "rank": 2, "action": "string", "expected_gain": "string" }
+  ],
   "strengths": ["string"]
 }`
 
-  const competitionPrompt = `Job title: ${toPromptLine(targetRole, 120)}
+  // Competition estimation is disabled — using static fallback for now
+  // const competitionPrompt = `職位名稱: ${toPromptLine(targetRole, 120)}`
 
-Return JSON:
-{
-  "job_title": "<exact title>",
-  "base_role": <integer>,
-  "base_role_reasoning": "<one sentence explaining the three-factor estimate>",
-  "estimated_applicants": <integer>,
-  "applicant_range": "<low>–<high>",
-  "competition_tag": "<tag>"
-}`
+  // Only do ATS for now, competition disabled
+  const atsResponse = await callClaude(`${ATS_SYSTEM_PROMPT}\n\n${USER_CONTENT_GUARDRAIL}`, atsPrompt, 0, {
+    model: 'claude-haiku-4-5-20251001',
+    maxTokens: 500,
+    timeoutMs: 20_000,
+  })
 
-  const [atsResponse, competitionResponse] = await Promise.all([
-    callClaude(`${ATS_SYSTEM_PROMPT}\n\n${USER_CONTENT_GUARDRAIL}`, atsPrompt, 0, {
-      maxTokens: 2048,
-      cacheSystem: true,
-      timeoutMs: 60_000,
-    }),
-    callClaude(`${COMPETITION_SYSTEM_PROMPT}\n\n${USER_CONTENT_GUARDRAIL}`, competitionPrompt, 0, {
-      model: 'claude-haiku-4-5-20251001',
-      maxTokens: 1024,
-      timeoutMs: 30_000,
-    }),
-  ])
+  // Competition estimate disabled — using static fallback
+  const competitionResponse = JSON.stringify({
+    job_title: targetRole,
+    base_role: 1200,
+    base_role_reasoning: 'Entry-level position estimate',
+    estimated_applicants: 1500,
+    applicant_range: '800–2200',
+    competition_tag: '中等競爭',
+  })
 
   let atsResult
   try {
     atsResult = JSON.parse(atsResponse)
-  } catch {
+  } catch (e) {
     const match = atsResponse.match(/\{[\s\S]*\}/)
-    if (match) atsResult = JSON.parse(match[0])
-    else throw new Error('Failed to parse ATS response')
+    if (match) {
+      try {
+        atsResult = JSON.parse(match[0])
+      } catch (parseErr) {
+        console.error('ATS JSON parse error:', parseErr instanceof Error ? parseErr.message : parseErr)
+        console.error('ATS response:', atsResponse.slice(0, 2000))
+        throw new Error(`Failed to parse ATS response: ${parseErr instanceof Error ? parseErr.message : 'unknown error'}`)
+      }
+    } else {
+      throw new Error('Failed to parse ATS response: no JSON found')
+    }
+  }
+
+  // Calculate risk_level based on score and dimensions
+  if (atsResult) {
+    atsResult.risk_level = calculateRiskLevel(atsResult.ats_score, atsResult.dimension_scores)
   }
 
   let competitionResult
@@ -286,7 +407,7 @@ Return JSON:
   }
 
   return {
-    atsScore: atsResult?.final_score ?? 50,
+    atsScore: atsResult?.ats_score ?? atsResult?.final_score ?? 50,
     atsResult,
     competition: competitionResult || {
       job_title: targetRole,
@@ -294,7 +415,7 @@ Return JSON:
       base_role_reasoning: '',
       estimated_applicants: 1000,
       applicant_range: '500-1500',
-      competition_tag: '中等竞争',
+      competition_tag: '中等競爭',
     },
   }
 }
@@ -302,6 +423,8 @@ Return JSON:
 // ══════════════════════════════════════════════════════════════════════════════
 // Phase 2 — Mentor Advice (KB lookup + Claude)
 // ══════════════════════════════════════════════════════════════════════════════
+// TEMPORARILY DISABLED - To be re-enabled after optimization
+/*
 export async function runMentorAdvice(
   { resumeText, targetRole, jobDescription }: AnalyzeRequest,
   { atsResult }: AtsPhaseResult
@@ -503,14 +626,27 @@ ${lockedMentorList.map((m, i) => fmtMentor(m, i + 2)).join('\n\n')}
     ] as MentorPhaseResult['mentorAdvice'],
   }
 }
+*/
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Orchestrator — composes ATS + Mentor phases (used by route handler directly)
 // ══════════════════════════════════════════════════════════════════════════════
 export async function runResumeAnalysis(input: AnalyzeRequest): Promise<AnalyzeResultPayload> {
   const atsPhase = await runAtsAnalysis(input)
-  const mentorPhase = await runMentorAdvice(input, atsPhase)
-  return { ...atsPhase, ...mentorPhase }
+
+  // ── TEMPORARILY DISABLED: Mentor advice generation (will be re-enabled after optimization)
+  // const mentorPhase = await runMentorAdvice(input, atsPhase)
+  // return { ...atsPhase, ...mentorPhase }
+
+  // For now, return ATS results only with empty mentor data
+  return {
+    ...atsPhase,
+    overallJudgment: { strengths: '', coreIssues: '', mentorCount: 4 },
+    currentSalary: '待評估',
+    topSalary: '待評估',
+    topCompanies: [],
+    mentorAdvice: [],
+  }
 }
 
 export async function POST(request: NextRequest) {

@@ -17,7 +17,7 @@ import { getBoss } from '../lib/db'
 import { AI_QUEUE_NAMES, enqueueAiJob } from '../lib/job-queue'
 import { logError, logInfo, logWarn } from '../lib/logger'
 import { optimizeResumeJobRequestSchema } from '../lib/validation'
-import { runAtsAnalysis, runMentorAdvice } from '../app/api/analyze/route'
+import { runAtsAnalysis } from '../app/api/analyze/route'
 import { runResumeOptimization } from '../app/api/optimize-resume/route'
 
 loadEnvConfig(process.cwd())
@@ -55,18 +55,21 @@ async function processAnalyze(jobId: string) {
     jobDescription: artifact.jobDescription,
   }
 
-  const [atsPhase, mentorPhase] = await withJobHeartbeat(jobId, 'ats-scoring', async () => {
+  const atsPhase = await withJobHeartbeat(jobId, 'ats-scoring', async () => {
     // Phase 1: ATS + competition — save immediately so the score is available for display
     const ats = await runAtsAnalysis(input)
     await saveAtsResult(job.artifactId, ats)
-
-    // Phase 2: KB lookup + mentor advice
-    await heartbeatJob(jobId, 'mentor-advising')
-    const mentor = await runMentorAdvice(input, ats)
-    return [ats, mentor] as const
+    return ats
   })
 
-  const fullResult = { ...atsPhase, ...mentorPhase }
+  const fullResult = {
+    ...atsPhase,
+    overallJudgment: { strengths: '', coreIssues: '', mentorCount: 4 },
+    currentSalary: '待評估',
+    topSalary: '待評估',
+    topCompanies: [],
+    mentorAdvice: [],
+  }
   await saveAnalyzeResult(job.artifactId, fullResult)
   await completeJob(jobId, 'completed', {
     artifactId: job.artifactId,

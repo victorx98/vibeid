@@ -83,7 +83,7 @@ export async function waitForJob<T = unknown>(
     }
 
     await new Promise((resolve, reject) => {
-      const timer = window.setTimeout(resolve, 2_000)
+      const timer = window.setTimeout(resolve, 1_000)
       options.signal?.addEventListener(
         'abort',
         () => {

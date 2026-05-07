@@ -14,9 +14,9 @@ interface Step {
 
 const analyzeSteps: Step[] = [
   { label: '解析简历',  desc: '提取简历内容、结构与关键信息',            stage: 'parsing'   },
-  { label: '匹配导师',  desc: '从 500+ 导师经验中筛选最相关背景',        stage: 'analyzing' },
   { label: 'ATS 评分', desc: '评估简历在目标岗位的竞争力与通过率',       stage: 'analyzing' },
-  { label: '生成建议',  desc: '结合导师视角输出个性化优化建议',           stage: 'analyzing' },
+  // { label: '匹配导师',  desc: '从 500+ 导师经验中筛选最相关背景',        stage: 'analyzing' },  // DISABLED - mentor feature temporarily disabled
+  // { label: '生成建议',  desc: '结合导师视角输出个性化优化建议',           stage: 'analyzing' },  // DISABLED - will be re-enabled after mentor advice optimization
 ]
 
 const optimizeSteps: Step[] = [
@@ -139,10 +139,10 @@ export default function LoadingScreen({ mode = 'analyze', stage, completed, onCo
 
   // ── Step completion ────────────────────────────────────────────────────────
 
-  // Sub-step drip within the "analyzing" block (visual only)
+  // Sub-step drip within the "analyzing" block — only drip when not completed
   const [analyzingSubStep, setAnalyzingSubStep] = useState(0)
   useEffect(() => {
-    if (stageKey !== 'analyzing') {
+    if (stageKey !== 'analyzing' || completed) {
       const frame = window.requestAnimationFrame(() => {
         setAnalyzingSubStep(0)
       })
@@ -150,9 +150,9 @@ export default function LoadingScreen({ mode = 'analyze', stage, completed, onCo
     }
     const id = setInterval(() => {
       setAnalyzingSubStep(s => Math.min(s + 1, 2))
-    }, 5000)
+    }, 3000)
     return () => clearInterval(id)
-  }, [stageKey])
+  }, [stageKey, completed])
 
   // Sub-step drip within optimize stages (one active step at a time per stage)
   const [optimizingSubStep, setOptimizingSubStep] = useState(0)
@@ -180,12 +180,14 @@ export default function LoadingScreen({ mode = 'analyze', stage, completed, onCo
       if (step.stage === 'parsing') return 'active'
       return 'pending'
     }
-    // analyzing
+    // analyzing stage
     if (step.stage === 'parsing') return 'done'
-    // analyzing sub-steps: drip (index 0=parsing done, 1=匹配导师, 2=ATS评分, 3=生成建议)
+    // If completed, all steps are done
+    if (completed) return 'done'
+    // analyzing sub-steps: keep first one active, others pending until completed
+    // This way steps don't show complete prematurely
     const subIndex = index - 1
-    if (subIndex < analyzingSubStep) return 'done'
-    if (subIndex === analyzingSubStep) return 'active'
+    if (subIndex === 0) return 'active'
     return 'pending'
   }
 

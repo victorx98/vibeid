@@ -21,8 +21,8 @@ export default function ATSOptimization({ atsResult }: { atsResult?: ATSResult }
         </div>
         {atsResult && (
           <p className="text-sm mt-1" style={{ color: '#6B7280' }}>
-            原始评分 <span className="font-bold" style={{ color: '#DC2626' }}>{atsResult.final_score}</span>/100
-            → 优化后预估 <span className="font-bold" style={{ color: '#2A6041' }}>{Math.min(atsResult.final_score + 25, 95)}</span>/100
+            原始评分 <span className="font-bold" style={{ color: '#DC2626' }}>{atsResult.ats_score ?? atsResult.final_score}</span>/100
+            → 优化后预估 <span className="font-bold" style={{ color: '#2A6041' }}>{Math.min((atsResult.ats_score ?? atsResult.final_score ?? 50) + 25, 95)}</span>/100
           </p>
         )}
       </div>

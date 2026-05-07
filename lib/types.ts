@@ -1,3 +1,5 @@
+// ── LEGACY ATS Score Breakdown (DEPRECATED - kept for reference) ──
+/*
 export interface ATSScoreBreakdown {
   keyword_match:     { weight: number; raw: number; contribution: number }
   skills_match:      { weight: number; raw: number; contribution: number }
@@ -9,19 +11,50 @@ export interface ATSPenalty {
   reason: string
   deduction: number
 }
+*/
+
+// ── NEW ATS Score Breakdown (2025 Updated) ──
+export interface ATSScoreBreakdown {
+  A_format_parsing: number // 0-20
+  B_info_completeness: number // 0-20
+  C_content_quality: number // 0-35
+  D_keyword_matching: number // 0-15 (or 0-13 if no JD)
+  E_delivery_readiness: number // 0-10
+}
+
+export interface ATSIssue {
+  rank: number
+  severity: 'high' | 'medium' | 'low'
+  issue: string
+  impact: string
+}
+
+export interface ATSImprovementAction {
+  rank: number
+  action: string
+  expected_gain: string
+}
 
 export interface ATSResult {
-  candidate_name: string
-  inferred_role: string
-  scores: ATSScoreBreakdown
-  base_score: number
-  penalties: ATSPenalty[]
-  total_penalty: number
-  final_score: number
-  passing_threshold: number
-  passed: boolean
-  top_issues: { severity: string; issue: string; recommendation: string }[]
+  ats_score: number
+  risk_level: 'low' | 'mid' | 'high' | '低' | '中' | '高'
+  scoring_context: string // "提供 JD" or "通用方向估算"
+  dimension_scores: ATSScoreBreakdown
+  top_issues: ATSIssue[]
+  priority_improvements: ATSImprovementAction[]
+  score_improvement_range: string
   strengths: string[]
+
+  // LEGACY fields (DEPRECATED - kept for compatibility)
+  candidate_name?: string
+  inferred_role?: string
+  scores?: any
+  base_score?: number
+  penalties?: any[]
+  total_penalty?: number
+  final_score?: number
+  passing_threshold?: number
+  passed?: boolean
 }
 
 export interface OverallJudgment {
@@ -49,6 +82,9 @@ export interface AtsPhaseResult {
   atsResult: ATSResult
   competition: CompetitionEstimate
 }
+
+// LEGACY AnalyzeResultPayload & ResumeArtifactPayload maintain backward compatibility
+// but now work with the new ATSResult structure
 
 export interface MentorPhaseResult {
   overallJudgment: OverallJudgment

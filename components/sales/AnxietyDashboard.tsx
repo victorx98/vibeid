@@ -52,53 +52,46 @@ function ScoreRing({ score, size = 112 }: { score: number; size?: number }) {
   )
 }
 
-function DimensionBar({ label, raw, weight, issue }: { label: string; raw: number; weight: number; issue?: string }) {
-  const barColor = raw < 50 ? '#ef4444' : raw < 70 ? '#f97316' : raw < 85 ? '#eab308' : '#22c55e'
-  const scoreColor = raw < 50 ? 'text-red-500' : raw < 70 ? 'text-orange-500' : raw < 85 ? 'text-yellow-600' : 'text-green-600'
+// NEW 5-dimension bar for new ATS system
+function DimensionBar({ label, score, maxScore = 20 }: { label: string; score: number; maxScore?: number }) {
+  const percentage = (score / maxScore) * 100
+  const color = percentage < 50 ? '#ef4444' : percentage < 70 ? '#f97316' : percentage < 85 ? '#eab308' : '#22c55e'
+  const scoreColor = percentage < 50 ? 'text-red-500' : percentage < 70 ? 'text-orange-500' : percentage < 85 ? 'text-yellow-600' : 'text-green-600'
+
   return (
     <div className="space-y-1.5">
       <div className="flex justify-between items-baseline text-xs">
-        <span className="text-gray-600 font-medium">{label} <span className="text-gray-400 font-normal">权重{Math.round(weight * 100)}%</span></span>
-        <span className={`font-bold text-sm ${scoreColor}`}>{raw}<span className="text-gray-400 font-normal text-xs">/100</span></span>
+        <span className="text-gray-600 font-medium">{label}</span>
+        <span className={`font-bold text-sm ${scoreColor}`}>{score}<span className="text-gray-400 font-normal text-xs">/{maxScore}</span></span>
       </div>
       <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
         <motion.div
           className="h-full rounded-full"
-          style={{ backgroundColor: barColor }}
+          style={{ backgroundColor: color }}
           initial={{ width: 0 }}
-          animate={{ width: `${raw}%` }}
+          animate={{ width: `${Math.min(percentage, 100)}%` }}
           transition={{ duration: 1, ease: 'easeOut', delay: 0.3 }}
         />
       </div>
-      {issue && raw < 80 && (
-        <p className="text-xs text-gray-400 pl-0.5">{issue}</p>
-      )}
     </div>
   )
 }
 
-// Match top_issues / penalties to a dimension by keyword
-function findIssueFor(ats: ATSResult, dim: string): string | undefined {
-  const keywords: Record<string, string[]> = {
-    keyword:    ['关键词', 'keyword', '匹配度', 'ATS'],
-    skill:      ['技能', 'skill', 'proficiency', '工具'],
-    format:     ['格式', 'format', '排版', '结构', 'section'],
-    experience: ['经历', 'experience', '实习', '量化', 'bullet', 'STAR'],
-  }
-  const terms = keywords[dim] || []
-  // Check penalties first
-  for (const p of ats.penalties) {
-    if (terms.some(t => p.reason.toLowerCase().includes(t.toLowerCase()))) {
-      return `${p.reason} (${p.deduction}分)`
-    }
-  }
-  // Then top issues
-  for (const issue of ats.top_issues) {
-    if (terms.some(t => issue.issue.toLowerCase().includes(t.toLowerCase()))) {
-      return issue.issue
-    }
-  }
-  return undefined
+// Risk level badge
+function RiskBadge({ level }: { level?: string }) {
+  const normalizedLevel = (level || '').toLowerCase().replace(/[^\w]/g, '')
+  const isHigh = normalizedLevel.includes('高') || normalizedLevel.includes('high')
+  const isMid = normalizedLevel.includes('中') || normalizedLevel.includes('mid')
+
+  return (
+    <span className={`inline-block text-xs font-semibold px-2.5 py-1 rounded-full ${
+      isHigh ? 'bg-red-100 text-red-600' :
+      isMid ? 'bg-orange-100 text-orange-600' :
+      'bg-green-100 text-green-600'
+    }`}>
+      {isHigh ? '高风险' : isMid ? '中风险' : '低风险'}
+    </span>
+  )
 }
 
 interface DashboardProps {
@@ -120,6 +113,10 @@ export default function AnxietyDashboard({ atsScore, atsResult, currentSalary, t
   const statusLabel = atsScore >= 75 ? '通过 — 有竞争力' : atsScore >= 70 ? '勉强通过' : atsScore >= 60 ? '未达标 — 需优化' : '不通过 — 需大幅修改'
   const statusColor = atsScore >= 75 ? 'text-green-600' : atsScore >= 70 ? 'text-yellow-600' : 'text-red-600'
 
+  // Try to use new format, fallback to old format
+  const hasNewFormat = atsResult?.dimension_scores !== undefined
+  const hasOldFormat = atsResult?.scores !== undefined
+
   return (
     <div className="space-y-4 max-w-4xl mx-auto px-4">
       {/* Row 1: ATS Score + Salary + Competitors */}
@@ -136,6 +133,16 @@ export default function AnxietyDashboard({ atsScore, atsResult, currentSalary, t
             </div>
             <p className="mt-2 text-sm text-gray-500">ATS 通过率评分</p>
             <p className={`text-sm font-semibold ${statusColor}`}>{statusLabel}</p>
+
+            {/* Risk level and JD context */}
+            {hasNewFormat && (
+              <div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-2 items-center">
+                <RiskBadge level={atsResult?.risk_level} />
+                {atsResult?.scoring_context && (
+                  <p className="text-xs text-gray-400">{atsResult.scoring_context}</p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Credibility line + detail toggle */}
@@ -146,7 +153,7 @@ export default function AnxietyDashboard({ atsScore, atsResult, currentSalary, t
                 onClick={() => setShowBreakdown(v => !v)}
                 className="mt-2 text-xs font-medium transition-colors" style={{ color: '#2A6041' }}
               >
-                {showBreakdown ? '收起评分维度 ▴' : '查看评分维度 ▾'}
+                {showBreakdown ? '收起评分详情 ▴' : '查看评分详情 ▾'}
               </button>
             )}
           </div>
@@ -212,7 +219,7 @@ export default function AnxietyDashboard({ atsScore, atsResult, currentSalary, t
         </motion.div>
       </div>
 
-      {/* Row 2: ATS Breakdown (if available, toggled) */}
+      {/* Row 2: ATS Breakdown (if available, toggled) — NEW 5-dimension format */}
       <AnimatePresence>
       {atsResult && showBreakdown && (
         <motion.div
@@ -221,47 +228,92 @@ export default function AnxietyDashboard({ atsScore, atsResult, currentSalary, t
           className="overflow-hidden"
         >
         <div className="bg-white rounded-2xl p-6 shadow-sm" style={{ border: '1px solid #E5E7EB', borderRadius: '16px' }}>
-          {/* 4 Dimension bars */}
-          <div className="space-y-3 mb-5">
-            <DimensionBar label="关键词匹配" raw={atsResult.scores.keyword_match.raw} weight={0.5}
-              issue={findIssueFor(atsResult, 'keyword')} />
-            <DimensionBar label="技能匹配" raw={atsResult.scores.skills_match.raw} weight={0.25}
-              issue={findIssueFor(atsResult, 'skill')} />
-            <DimensionBar label="格式合规" raw={atsResult.scores.format_compliance.raw} weight={0.1}
-              issue={findIssueFor(atsResult, 'format')} />
-            <DimensionBar label="经历匹配" raw={atsResult.scores.experience_match.raw} weight={0.15}
-              issue={findIssueFor(atsResult, 'experience')} />
-          </div>
-
-          {/* Penalties */}
-          {atsResult.penalties.length > 0 && (
-            <div>
-              <p className="text-sm font-semibold text-red-500 mb-3">
-                扣分项（共 {atsResult.total_penalty} 分）
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {atsResult.penalties.map((p, i) => (
-                  <span key={i} className="text-xs bg-red-50 text-red-600 px-3 py-1.5 rounded-lg font-medium">
-                    {p.reason} ({p.deduction}分)
-                  </span>
-                ))}
+          {/* NEW 5-Dimension bars */}
+          {hasNewFormat && atsResult.dimension_scores && (
+            <>
+              <p className="text-sm font-semibold text-gray-700 mb-4">评分维度（共 100 分）</p>
+              <div className="space-y-3 mb-5">
+                <DimensionBar label="A. 解析与格式兼容性" score={atsResult.dimension_scores.A_format_parsing} maxScore={20} />
+                <DimensionBar label="B. 信息完整性与结构组织" score={atsResult.dimension_scores.B_info_completeness} maxScore={20} />
+                <DimensionBar label="C. 内容质量与成果表达" score={atsResult.dimension_scores.C_content_quality} maxScore={35} />
+                <DimensionBar label="D. 岗位关键词与匹配性" score={atsResult.dimension_scores.D_keyword_matching} maxScore={15} />
+                <DimensionBar label="E. 最终投递完成度" score={atsResult.dimension_scores.E_delivery_readiness} maxScore={10} />
               </div>
-            </div>
+            </>
+          )}
+
+          {/* LEGACY 4-Dimension bars (fallback) */}
+          {!hasNewFormat && hasOldFormat && atsResult.scores && (
+            <>
+              <p className="text-sm font-semibold text-gray-700 mb-4">评分维度（共 100 分）</p>
+              <div className="space-y-3 mb-5">
+                <DimensionBar label="关键词匹配" score={atsResult.scores.keyword_match.raw} maxScore={100} />
+                <DimensionBar label="技能匹配" score={atsResult.scores.skills_match.raw} maxScore={100} />
+                <DimensionBar label="格式合规" score={atsResult.scores.format_compliance.raw} maxScore={100} />
+                <DimensionBar label="经历匹配" score={atsResult.scores.experience_match.raw} maxScore={100} />
+              </div>
+            </>
           )}
 
           {/* Top Issues */}
-          {atsResult.top_issues.length > 0 && (
-            <div className={atsResult.penalties.length > 0 ? 'mt-4 pt-4 border-t border-gray-100' : ''}>
-              <p className="text-sm font-semibold text-gray-700 mb-3">主要问题</p>
-              <ul className="space-y-2">
+          {atsResult.top_issues && atsResult.top_issues.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <p className="text-sm font-semibold text-gray-700 mb-3">关键问题</p>
+              <ul className="space-y-2.5">
                 {atsResult.top_issues.slice(0, 4).map((issue, i) => (
-                  <li key={i} className="flex items-start gap-2 text-xs">
-                    <span className={`shrink-0 px-1.5 py-0.5 rounded text-white font-medium ${
+                  <li key={i} className="flex items-start gap-3 text-xs">
+                    <span className={`shrink-0 px-2 py-1 rounded text-white font-medium ${
                       issue.severity === 'high' ? 'bg-red-500' : issue.severity === 'medium' ? 'bg-orange-500' : 'bg-yellow-500'
                     }`}>
                       {issue.severity === 'high' ? '高' : issue.severity === 'medium' ? '中' : '低'}
                     </span>
-                    <span className="text-gray-700 leading-relaxed">{issue.issue}</span>
+                    <div className="flex-1">
+                      <p className="text-gray-700 font-medium">{issue.issue}</p>
+                      <p className="text-gray-500 mt-1">{issue.impact}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Priority Improvements */}
+          {atsResult.priority_improvements && atsResult.priority_improvements.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <p className="text-sm font-semibold text-green-700 mb-3">优先改进建议</p>
+              <ul className="space-y-2.5">
+                {atsResult.priority_improvements.slice(0, 3).map((imp, i) => (
+                  <li key={i} className="flex items-start gap-3 text-xs">
+                    <span className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-100 text-green-600 font-semibold text-xs">
+                      {imp.rank}
+                    </span>
+                    <div className="flex-1">
+                      <p className="text-gray-700 font-medium">{imp.action}</p>
+                      <p className="text-gray-500 mt-1">{imp.expected_gain}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Score Improvement Range */}
+          {atsResult.score_improvement_range && (
+            <div className="mt-4 pt-4 border-t border-gray-100 bg-blue-50 rounded-lg p-3">
+              <p className="text-xs text-blue-800">
+                <span className="font-semibold">📈 提分预期：</span> {atsResult.score_improvement_range}
+              </p>
+            </div>
+          )}
+
+          {/* Strengths */}
+          {atsResult.strengths && atsResult.strengths.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <p className="text-sm font-semibold text-green-700 mb-2">✓ 简历亮点</p>
+              <ul className="flex flex-wrap gap-2">
+                {atsResult.strengths.map((str, i) => (
+                  <li key={i} className="text-xs bg-green-50 text-green-700 px-3 py-1.5 rounded-lg">
+                    {str}
                   </li>
                 ))}
               </ul>

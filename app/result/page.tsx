@@ -30,24 +30,34 @@ const FORMAT_CHECKS: { id: string; label: string; keywords: string[]; penalty: s
 ]
 
 function FormatComplianceAlert({ atsResult, onUnlock }: { atsResult: ATSResult; onUnlock: () => void }) {
-  const formatScore = atsResult.scores.format_compliance.raw
+  // Support both new and legacy format
+  let formatScore = 85
+  if (atsResult.dimension_scores?.A_format_parsing !== undefined) {
+    // New format: A dimension (0-20), scale to 0-100
+    formatScore = (atsResult.dimension_scores.A_format_parsing / 20) * 100
+  } else if (atsResult.scores?.format_compliance?.raw !== undefined) {
+    // Legacy format
+    formatScore = atsResult.scores.format_compliance.raw
+  }
+
   if (formatScore >= 85) return null // No alert needed for good format
 
-  const formatPenalties = atsResult.penalties.filter(p =>
+  // Detect format issues from top_issues
+  const formatIssues = (atsResult.top_issues || []).filter(issue =>
     FORMAT_CHECKS.some(check =>
-      check.keywords.some(kw => p.reason.toLowerCase().includes(kw.toLowerCase()))
+      check.keywords.some(kw => issue.issue.toLowerCase().includes(kw.toLowerCase()))
     )
   )
 
   // Also detect from static checks
-  const allIssueText = [...atsResult.top_issues.map(i => i.issue), ...atsResult.penalties.map(p => p.reason)].join(' ').toLowerCase()
+  const allIssueText = (atsResult.top_issues || []).map(i => i.issue).join(' ').toLowerCase()
   const detectedChecks = FORMAT_CHECKS.filter(check =>
     check.keywords.some(kw => allIssueText.includes(kw.toLowerCase()))
   )
 
   // If no specific format issues found but score is low, show generic warnings
   const issues = detectedChecks.length > 0 ? detectedChecks : FORMAT_CHECKS.slice(0, 2)
-  const totalPenalty = formatPenalties.reduce((sum, p) => sum + Math.abs(p.deduction), 0) || Math.round((85 - formatScore) * 0.3)
+  const totalPenalty = Math.round((85 - formatScore) * 0.3)
 
   return (
     <div className="rounded-2xl overflow-hidden" style={{ border: '2px solid #FCA5A5' }}>

@@ -37,12 +37,12 @@ const rateLimitStore =
   globalStore.__vibeidRateLimitStore ?? (globalStore.__vibeidRateLimitStore = new Map())
 
 export const RATE_LIMITS = {
-  upload: { name: 'upload', max: 10, windowMs: 60_000 },
-  analyze: { name: 'analyze', max: 5, windowMs: 60 * 60 * 1000 },
-  optimize: { name: 'optimize', max: 10, windowMs: 60 * 60 * 1000 },
-  previewOptimize: { name: 'preview-optimize', max: 30, windowMs: 60_000 },
-  checkoutConfirm: { name: 'checkout-confirm', max: 10, windowMs: 60 * 60 * 1000 },
-  checkoutSession: { name: 'checkout-session', max: 10, windowMs: 60 * 60 * 1000 },
+  upload: { name: 'upload', max: 100, windowMs: 60_000 },
+  analyze: { name: 'analyze', max: 100, windowMs: 60 * 60 * 1000 },
+  optimize: { name: 'optimize', max: 100, windowMs: 60 * 60 * 1000 },
+  previewOptimize: { name: 'preview-optimize', max: 100, windowMs: 60_000 },
+  checkoutConfirm: { name: 'checkout-confirm', max: 100, windowMs: 60 * 60 * 1000 },
+  checkoutSession: { name: 'checkout-session', max: 100, windowMs: 60 * 60 * 1000 },
 } as const satisfies Record<string, RateLimitConfig>
 
 function warnOnceInProduction() {
