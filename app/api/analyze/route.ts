@@ -314,10 +314,10 @@ export async function runAtsAnalysis({
 }: AnalyzeRequest): Promise<AtsPhaseResult> {
   const hasJd = !!jobDescription
   const jdSection = jobDescription
-    ? `\n\n職位描述（用於提取關鍵詞並與簡歷匹配）:\n${toPromptBlock('job_description', jobDescription, 1500)}`
+    ? `\n\n職位描述（用於提取關鍵詞並與簡歷匹配）:\n${toPromptBlock('job_description', jobDescription, 1000)}`
     : ''
 
-  const atsPrompt = `${toPromptBlock('resume_text', resumeText, 2500)}
+  const atsPrompt = `${toPromptBlock('resume_text', resumeText, 1800)}
 
 目標職位: ${toPromptLine(targetRole, 120)}${jdSection}
 ${hasJd ? `
@@ -360,7 +360,8 @@ ${hasJd ? `
   // Only do ATS for now, competition disabled
   const atsResponse = await callClaude(`${ATS_SYSTEM_PROMPT}\n\n${USER_CONTENT_GUARDRAIL}`, atsPrompt, 0, {
     model: 'claude-haiku-4-5-20251001',
-    maxTokens: 500,
+    maxTokens: 1200,
+    cacheSystem: true,
     timeoutMs: 20_000,
   })
 
@@ -378,17 +379,24 @@ ${hasJd ? `
   try {
     atsResult = JSON.parse(atsResponse)
   } catch (e) {
-    const match = atsResponse.match(/\{[\s\S]*\}/)
-    if (match) {
-      try {
-        atsResult = JSON.parse(match[0])
-      } catch (parseErr) {
-        console.error('ATS JSON parse error:', parseErr instanceof Error ? parseErr.message : parseErr)
-        console.error('ATS response:', atsResponse.slice(0, 2000))
-        throw new Error(`Failed to parse ATS response: ${parseErr instanceof Error ? parseErr.message : 'unknown error'}`)
+    // Try to extract JSON from markdown code blocks
+    let jsonStr = atsResponse.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '')
+    try {
+      atsResult = JSON.parse(jsonStr)
+    } catch {
+      // Try to extract JSON object using regex (greedy match from first { to last })
+      const match = jsonStr.match(/\{[\s\S]*\}/)
+      if (match) {
+        try {
+          atsResult = JSON.parse(match[0])
+        } catch (parseErr) {
+          console.error('ATS JSON parse error:', parseErr instanceof Error ? parseErr.message : parseErr)
+          console.error('ATS response:', atsResponse.slice(0, 2000))
+          throw new Error(`Failed to parse ATS response: ${parseErr instanceof Error ? parseErr.message : 'unknown error'}`)
+        }
+      } else {
+        throw new Error('Failed to parse ATS response: no JSON found')
       }
-    } else {
-      throw new Error('Failed to parse ATS response: no JSON found')
     }
   }
 
@@ -710,7 +718,7 @@ export async function POST(request: NextRequest) {
 
     logError('resume_analysis_failed', error)
     return Response.json(
-      { error: '简历分析失败，请稍后重试' },
+      { error: '简历分析失败，请稍后再试' },
       { status: 500, headers }
     )
   }

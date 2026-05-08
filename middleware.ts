@@ -40,7 +40,7 @@ async function refreshSupabaseSession(request: NextRequest): Promise<NextRespons
   return response
 }
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname, origin } = request.nextUrl
 
   if (pathname.startsWith('/vibe-id-sample') && !publicVibeSampleEnabled) {
