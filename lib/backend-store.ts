@@ -12,6 +12,9 @@ import type { AnalyzeResultPayload, ResumeArtifactPayload } from './types'
 
 export type AiJobKind = 'analyze' | 'optimize'
 export type AiJobStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+export type PaymentProvider = 'stripe' | 'wechat'
+export type PaymentChannel = 'checkout' | 'native' | 'h5' | 'jsapi'
+export type OrderStatus = 'pending' | 'paid' | 'canceled'
 
 export interface AiJobRecord {
   id: string
@@ -61,6 +64,38 @@ interface JobRow {
   updated_at: Date
 }
 
+interface OrderRow {
+  id: string
+  user_id: string
+  artifact_id: string | null
+  product_tier: ProductTier
+  payment_provider: PaymentProvider
+  provider_channel: PaymentChannel | null
+  provider_order_id: string | null
+  provider_payment_id: string | null
+  status: OrderStatus
+  amount: number | null
+  currency: string | null
+  created_at: Date
+  updated_at: Date
+}
+
+export interface CheckoutOrderRecord {
+  id: string
+  userId: string
+  artifactId: string | null
+  productTier: ProductTier
+  paymentProvider: PaymentProvider
+  providerChannel: PaymentChannel | null
+  providerOrderId: string | null
+  providerPaymentId: string | null
+  status: OrderStatus
+  amount: number | null
+  currency: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 function hashInput(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
@@ -81,6 +116,24 @@ function mapJob(row: JobRow): AiJobRecord {
     result: row.result,
     errorCode: row.error_code,
     errorMessage: row.error_message,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+  }
+}
+
+function mapOrder(row: OrderRow): CheckoutOrderRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    artifactId: row.artifact_id,
+    productTier: row.product_tier,
+    paymentProvider: row.payment_provider,
+    providerChannel: row.provider_channel,
+    providerOrderId: row.provider_order_id,
+    providerPaymentId: row.provider_payment_id,
+    status: row.status,
+    amount: row.amount,
+    currency: row.currency,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   }
@@ -419,12 +472,23 @@ export async function createPendingOrder(input: {
   productTier: ProductTier
   amount?: number | null
   currency?: string | null
+  paymentProvider?: PaymentProvider
+  providerChannel?: PaymentChannel | null
 }): Promise<string> {
   const result = await query<{ id: string }>(
     `
       insert into billing.orders
-        (user_id, artifact_id, product_tier, status, amount, currency)
-      values ($1, $2, $3, 'pending', $4, $5)
+        (
+          user_id,
+          artifact_id,
+          product_tier,
+          status,
+          amount,
+          currency,
+          payment_provider,
+          provider_channel
+        )
+      values ($1, $2, $3, 'pending', $4, $5, $6, $7)
       returning id
     `,
     [
@@ -433,6 +497,8 @@ export async function createPendingOrder(input: {
       input.productTier,
       input.amount ?? null,
       input.currency ?? null,
+      input.paymentProvider ?? 'stripe',
+      input.providerChannel ?? 'checkout',
     ]
   )
   return result.rows[0].id
@@ -445,11 +511,170 @@ export async function attachCheckoutSessionToOrder(input: {
   await query(
     `
       update billing.orders
-      set stripe_checkout_session_id = $2
+      set stripe_checkout_session_id = $2,
+          payment_provider = 'stripe',
+          provider_channel = 'checkout',
+          provider_order_id = coalesce(provider_order_id, $2)
       where id = $1
     `,
     [input.orderId, input.checkoutSessionId]
   )
+}
+
+export async function attachProviderOrderToOrder(input: {
+  orderId: string
+  paymentProvider: PaymentProvider
+  providerChannel: PaymentChannel
+  providerOrderId: string
+  providerPayload?: unknown
+}): Promise<void> {
+  await query(
+    `
+      update billing.orders
+      set payment_provider = $2,
+          provider_channel = $3,
+          provider_order_id = $4,
+          provider_payload = coalesce($5::jsonb, provider_payload)
+      where id = $1
+    `,
+    [
+      input.orderId,
+      input.paymentProvider,
+      input.providerChannel,
+      input.providerOrderId,
+      input.providerPayload == null ? null : JSON.stringify(input.providerPayload),
+    ]
+  )
+}
+
+export function buildWechatOutTradeNo(orderId: string): string {
+  return `wx${orderId.replaceAll('-', '').slice(0, 30)}`
+}
+
+export async function getCheckoutOrderForUser(
+  userId: string,
+  orderId: string
+): Promise<CheckoutOrderRecord | null> {
+  const result = await query<OrderRow>(
+    `
+      select id, user_id, artifact_id, product_tier, payment_provider,
+             provider_channel, provider_order_id, provider_payment_id,
+             status, amount, currency, created_at, updated_at
+      from billing.orders
+      where id = $1 and user_id = $2
+    `,
+    [orderId, userId]
+  )
+  return result.rows[0] ? mapOrder(result.rows[0]) : null
+}
+
+export async function getCheckoutOrderByProviderOrderId(
+  paymentProvider: PaymentProvider,
+  providerOrderId: string
+): Promise<CheckoutOrderRecord | null> {
+  const result = await query<OrderRow>(
+    `
+      select id, user_id, artifact_id, product_tier, payment_provider,
+             provider_channel, provider_order_id, provider_payment_id,
+             status, amount, currency, created_at, updated_at
+      from billing.orders
+      where payment_provider = $1 and provider_order_id = $2
+    `,
+    [paymentProvider, providerOrderId]
+  )
+  return result.rows[0] ? mapOrder(result.rows[0]) : null
+}
+
+export async function getWechatOpenIdForUser(
+  userId: string,
+  appId: string
+): Promise<string | null> {
+  const result = await query<{ openid: string }>(
+    `
+      select openid
+      from billing.wechat_payers
+      where user_id = $1 and appid = $2
+    `,
+    [userId, appId]
+  )
+  return result.rows[0]?.openid ?? null
+}
+
+export async function upsertWechatOpenIdForUser(input: {
+  userId: string
+  appId: string
+  openId: string
+}): Promise<void> {
+  await query(
+    `
+      insert into billing.wechat_payers (user_id, appid, openid)
+      values ($1, $2, $3)
+      on conflict (user_id, appid)
+      do update set openid = excluded.openid
+    `,
+    [input.userId, input.appId, input.openId]
+  )
+}
+
+export async function markProviderOrderPaidAndGrantEntitlements(input: {
+  paymentProvider: PaymentProvider
+  providerOrderId: string
+  providerPaymentId: string | null
+  amount: number | null
+  currency: string | null
+  providerPayload?: unknown
+}): Promise<{ orderId: string; userId: string; productTier: ProductTier } | null> {
+  return withTransaction(async (client) => {
+    const orderResult = await client.query<{
+      id: string
+      user_id: string
+      product_tier: ProductTier
+    }>(
+      `
+        update billing.orders
+        set status = 'paid',
+            provider_payment_id = coalesce($3, provider_payment_id),
+            amount = coalesce($4, amount),
+            currency = coalesce($5, currency),
+            provider_payload = coalesce($6::jsonb, provider_payload)
+        where payment_provider = $1
+          and provider_order_id = $2
+          and status in ('pending', 'paid')
+          and ($4::integer is null or amount is null or amount = $4)
+          and ($5::text is null or currency is null or upper(currency) = upper($5))
+        returning id, user_id, product_tier
+      `,
+      [
+        input.paymentProvider,
+        input.providerOrderId,
+        input.providerPaymentId,
+        input.amount,
+        input.currency,
+        input.providerPayload == null ? null : JSON.stringify(input.providerPayload),
+      ]
+    )
+
+    const order = orderResult.rows[0]
+    if (!order) return null
+
+    for (const tier of TIERS_FOR_PRODUCT[order.product_tier]) {
+      await client.query(
+        `
+          insert into billing.entitlements (user_id, product_tier, source_order_id, active)
+          values ($1, $2, $3, true)
+          on conflict (source_order_id, product_tier)
+          do update set active = true
+        `,
+        [order.user_id, tier, order.id]
+      )
+    }
+
+    return {
+      orderId: order.id,
+      userId: order.user_id,
+      productTier: order.product_tier,
+    }
+  })
 }
 
 export async function markOrderPaidAndGrantEntitlements(input: {
@@ -470,6 +695,10 @@ export async function markOrderPaidAndGrantEntitlements(input: {
         set status = 'paid',
             stripe_checkout_session_id = coalesce(stripe_checkout_session_id, $1),
             stripe_payment_intent_id = coalesce($2, stripe_payment_intent_id),
+            payment_provider = 'stripe',
+            provider_channel = coalesce(provider_channel, 'checkout'),
+            provider_order_id = coalesce(provider_order_id, $1),
+            provider_payment_id = coalesce($2, provider_payment_id),
             amount = coalesce($3, amount),
             currency = coalesce($4, currency)
         where stripe_checkout_session_id = $1
@@ -512,10 +741,29 @@ export async function markOrderCanceled(checkoutSessionId: string): Promise<void
   await query(
     `
       update billing.orders
-      set status = 'canceled'
+      set status = 'canceled',
+          payment_provider = 'stripe',
+          provider_channel = coalesce(provider_channel, 'checkout'),
+          provider_order_id = coalesce(provider_order_id, $1)
       where stripe_checkout_session_id = $1 and status = 'pending'
     `,
     [checkoutSessionId]
+  )
+}
+
+export async function markProviderOrderCanceled(input: {
+  paymentProvider: PaymentProvider
+  providerOrderId: string
+}): Promise<void> {
+  await query(
+    `
+      update billing.orders
+      set status = 'canceled'
+      where payment_provider = $1
+        and provider_order_id = $2
+        and status = 'pending'
+    `,
+    [input.paymentProvider, input.providerOrderId]
   )
 }
 
@@ -535,6 +783,41 @@ export async function markStripeEventProcessed(id: string, error?: string): Prom
   await query(
     `
       update billing.stripe_events
+      set processed_at = now(),
+          error = $2
+      where id = $1
+    `,
+    [id, error ?? null]
+  )
+}
+
+export async function insertWechatEvent(input: {
+  id: string
+  type: string
+  providerOrderId?: string | null
+  providerPaymentId?: string | null
+}): Promise<boolean> {
+  const result = await query(
+    `
+      insert into billing.wechat_events
+        (id, type, provider_order_id, provider_payment_id)
+      values ($1, $2, $3, $4)
+      on conflict (id) do nothing
+    `,
+    [
+      input.id,
+      input.type,
+      input.providerOrderId ?? null,
+      input.providerPaymentId ?? null,
+    ]
+  )
+  return result.rowCount === 1
+}
+
+export async function markWechatEventProcessed(id: string, error?: string): Promise<void> {
+  await query(
+    `
+      update billing.wechat_events
       set processed_at = now(),
           error = $2
       where id = $1

@@ -33,6 +33,13 @@ export default function SalesPage() {
         if (!cancelled) {
           setSession(artifact)
           setEmailInput(artifact.confirmedEmail || artifact.candidateEmail || '')
+          if (
+            searchParams.get('wechat_pay') === '1' &&
+            searchParams.get('wechat_oauth') === 'success' &&
+            searchParams.get('wechat_product') === 'basic'
+          ) {
+            setShowPayment(true)
+          }
         }
       })
       .catch(() => {

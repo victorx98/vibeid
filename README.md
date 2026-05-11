@@ -82,12 +82,17 @@ npm run start
   Required to mint and verify signed entitlement cookies for the demo checkout flow and the paid resume optimization API.
 - `BILLING_KILL_SWITCH=false`
   Returns `503` from checkout endpoints and prevents new entitlement minting when toggled on.
+- `WECHAT_PAY_ENABLED=false`
+  Enables the official WeChat Pay API v3 flow when `BILLING_ENABLED=true`. Configure merchant ID, AppID/AppSecret, API v3 key, merchant serial number, private/public keys, and `WECHAT_PRICE_*_CNY_CENTS` before turning it on.
 - `NEXT_PUBLIC_DEMO_UNLOCKS_ENABLED=false`
   Keeps the old fake payment unlock flow disabled unless you opt into local demo mode.
 - `NEXT_PUBLIC_ENABLE_VIBE_SAMPLE=false`
   Keeps the static `public/vibe-id-sample` preview blocked unless you opt into local demo mode.
 
 The boolean flags above default to `false` when unset.
+
+If a preview or reverse-proxy gate protects the site, allow both webhook paths to bypass it:
+`/api/stripe/webhook` and `/api/wechat/webhook`.
 
 ## Verification
 

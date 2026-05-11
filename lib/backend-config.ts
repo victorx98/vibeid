@@ -52,9 +52,25 @@ export function billingEnabled(): boolean {
   return readBooleanEnv('BILLING_ENABLED', false)
 }
 
+export function wechatPayEnabled(): boolean {
+  return readBooleanEnv('WECHAT_PAY_ENABLED', false)
+}
+
 export function getStripePriceId(productTier: ProductTier): string | null {
   if (productTier === 'basic') return getEnv('STRIPE_PRICE_BASIC')
   return getEnv('STRIPE_PRICE_RESUME')
+}
+
+export function getWechatPriceCents(productTier: ProductTier): number | null {
+  const raw =
+    productTier === 'basic'
+      ? getEnv('WECHAT_PRICE_BASIC_CNY_CENTS')
+      : getEnv('WECHAT_PRICE_RESUME_CNY_CENTS')
+  if (!raw) return null
+
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value <= 0) return null
+  return value
 }
 
 /**
@@ -122,6 +138,39 @@ export function assertConfig(): void {
       errors.push(
         `ENTITLEMENTS_SECRET is too short (${secret.length} chars — minimum 32). Generate one with: openssl rand -hex 32`
       )
+    }
+
+    if (wechatPayEnabled()) {
+      const wechatRequired = [
+        'WECHAT_PAY_MCH_ID',
+        'WECHAT_PAY_APP_ID',
+        'WECHAT_PAY_APP_SECRET',
+        'WECHAT_PAY_API_V3_KEY',
+        'WECHAT_PAY_MERCHANT_SERIAL_NO',
+      ]
+      for (const name of wechatRequired) {
+        if (!getEnv(name)) {
+          errors.push(`${name} is not set (required when WECHAT_PAY_ENABLED=true)`)
+        }
+      }
+
+      if (!getEnv('WECHAT_PAY_PRIVATE_KEY') && !getEnv('WECHAT_PAY_PRIVATE_KEY_PATH')) {
+        errors.push(
+          'WECHAT_PAY_PRIVATE_KEY or WECHAT_PAY_PRIVATE_KEY_PATH is required when WECHAT_PAY_ENABLED=true'
+        )
+      }
+
+      if (!getEnv('WECHAT_PAY_PUBLIC_KEY') && !getEnv('WECHAT_PAY_PUBLIC_KEY_PATH')) {
+        errors.push(
+          'WECHAT_PAY_PUBLIC_KEY or WECHAT_PAY_PUBLIC_KEY_PATH is required when WECHAT_PAY_ENABLED=true'
+        )
+      }
+
+      if (!getWechatPriceCents('basic') && !getWechatPriceCents('resume')) {
+        errors.push(
+          'Neither WECHAT_PRICE_BASIC_CNY_CENTS nor WECHAT_PRICE_RESUME_CNY_CENTS is valid (required when WECHAT_PAY_ENABLED=true)'
+        )
+      }
     }
   }
 

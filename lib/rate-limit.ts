@@ -43,6 +43,7 @@ export const RATE_LIMITS = {
   previewOptimize: { name: 'preview-optimize', max: 30, windowMs: 60_000 },
   checkoutConfirm: { name: 'checkout-confirm', max: 10, windowMs: 60 * 60 * 1000 },
   checkoutSession: { name: 'checkout-session', max: 10, windowMs: 60 * 60 * 1000 },
+  checkoutStatus: { name: 'checkout-status', max: 120, windowMs: 60 * 60 * 1000 },
 } as const satisfies Record<string, RateLimitConfig>
 
 function warnOnceInProduction() {

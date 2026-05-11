@@ -119,6 +119,7 @@ export default function ResultPage() {
 
     let cancelled = false
     const isCheckoutSuccess = searchParams.get('checkout') === 'success'
+    const checkoutOrderId = searchParams.get('checkoutOrderId')
     setCheckoutSuccess(isCheckoutSuccess)
 
     async function loadArtifact() {
@@ -134,6 +135,11 @@ export default function ResultPage() {
           const status = (error as Error & { status?: number }).status
           const shouldRetry = isCheckoutSuccess && status === 402 && attempt < maxAttempts - 1
           if (shouldRetry) {
+            if (checkoutOrderId) {
+              await fetch(`/api/checkout/status?orderId=${encodeURIComponent(checkoutOrderId)}`, {
+                credentials: 'include',
+              }).catch(() => undefined)
+            }
             await new Promise(resolve => window.setTimeout(resolve, 2_000))
             continue
           }
@@ -144,6 +150,13 @@ export default function ResultPage() {
     }
 
     void loadArtifact()
+    if (
+      searchParams.get('wechat_pay') === '1' &&
+      searchParams.get('wechat_oauth') === 'success' &&
+      searchParams.get('wechat_product') === 'resume'
+    ) {
+      setShowPayment(true)
+    }
     return () => { cancelled = true }
   }, [router])
 

@@ -62,7 +62,7 @@ export async function proxy(request: NextRequest) {
       }
     }
 
-    if (pathname === '/api/stripe/webhook') {
+    if (pathname === '/api/stripe/webhook' || pathname === '/api/wechat/webhook') {
       return NextResponse.next()
     }
   }
