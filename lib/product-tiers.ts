@@ -1,10 +1,10 @@
-export type ProductTier = 'basic' | 'resume'
+export type ProductTier = 'basic' | 'premium'
 
-export const PRODUCT_TIERS: ProductTier[] = ['basic', 'resume']
+export const PRODUCT_TIERS: ProductTier[] = ['basic', 'premium']
 
 export const TIERS_FOR_PRODUCT: Record<ProductTier, ProductTier[]> = {
   basic: ['basic'],
-  resume: ['basic', 'resume'],
+  premium: ['basic', 'premium'],
 }
 
 export function isProductTier(value: unknown): value is ProductTier {

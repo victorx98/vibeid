@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   analyzeRequestSchema,
+  checkoutRequestSchema,
   getResumeUploadKind,
   hasExpectedFileSignature,
   isAllowedResumeMime,
@@ -29,6 +30,25 @@ describe('validation helpers', () => {
     expect(isAllowedResumeMime('docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')).toBe(true)
     expect(hasExpectedFileSignature('pdf', Buffer.from('%PDF-1.7'))).toBe(true)
     expect(hasExpectedFileSignature('docx', Buffer.from('504b0304', 'hex'))).toBe(true)
+  })
+
+  it('normalizes legacy resume checkout tier to premium', () => {
+    expect(checkoutRequestSchema.parse({ productTier: 'resume' })).toEqual({
+      productTier: 'premium',
+    })
+    expect(checkoutRequestSchema.parse({})).toEqual({ productTier: 'premium' })
+  })
+
+  it('accepts the extension id for Stripe cancel redirects', () => {
+    expect(
+      checkoutRequestSchema.parse({
+        productTier: 'basic',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+      })
+    ).toEqual({
+      productTier: 'basic',
+      extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+    })
   })
 
   it('normalizes optional candidate email on analyze requests', () => {

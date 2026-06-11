@@ -1,13 +1,17 @@
-import type { NextRequest } from 'next/server'
-
 import { logWarn } from './logger'
 
 // NOTE: this limiter uses a process-local Map. It bounds bursts from one
-// honest caller, but it does NOT coordinate across lambdas/containers. For
-// production we must move to a shared backend (Upstash Redis, Vercel KV, or
-// Postgres SKIP LOCKED) before the limits in RATE_LIMITS can be trusted as
-// security controls. See launch-hardening-plan-v2.md §2.7.
-type RequestLike = Pick<NextRequest, 'headers'>
+// honest caller, but it does NOT coordinate across instances/containers. For
+// production we must move to a shared backend (Redis or Postgres SKIP LOCKED)
+// before the limits in RATE_LIMITS can be trusted as security controls.
+type HeaderBag = Record<string, string | string[] | undefined>
+type RequestLike = { headers: HeaderBag }
+
+function headerValue(headers: HeaderBag, name: string): string | null {
+  const value = headers[name]
+  if (Array.isArray(value)) return value[0] ?? null
+  return value ?? null
+}
 
 export interface RateLimitConfig {
   name: string
@@ -56,18 +60,18 @@ function warnOnceInProduction() {
 }
 
 export function getClientIp(request: RequestLike): string {
-  const forwardedFor = request.headers.get('x-forwarded-for')
+  const forwardedFor = headerValue(request.headers, 'x-forwarded-for')
   if (forwardedFor) {
     return forwardedFor.split(',')[0].trim()
   }
 
-  const realIp = request.headers.get('x-real-ip')
+  const realIp = headerValue(request.headers, 'x-real-ip')
   if (realIp) return realIp.trim()
 
-  const connectingIp = request.headers.get('cf-connecting-ip')
+  const connectingIp = headerValue(request.headers, 'cf-connecting-ip')
   if (connectingIp) return connectingIp.trim()
 
-  const userAgent = request.headers.get('user-agent') ?? 'unknown'
+  const userAgent = headerValue(request.headers, 'user-agent') ?? 'unknown'
   return `ua:${userAgent.slice(0, 80)}`
 }
 
@@ -107,7 +111,7 @@ export function checkRateLimit(request: RequestLike, config: RateLimitConfig): R
   }
 }
 
-export function createRateLimitHeaders(result: RateLimitResult): HeadersInit {
+export function createRateLimitHeaders(result: RateLimitResult): Record<string, string> {
   return {
     'X-RateLimit-Limit': String(result.limit),
     'X-RateLimit-Remaining': String(result.remaining),

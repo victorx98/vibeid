@@ -86,12 +86,25 @@ export const previewOptimizeRequestSchema = z.object({
   targetRole: requiredTrimmedString(2, MAX_TARGET_ROLE_CHARS),
 })
 
+/** Accepts legacy `resume` from older clients and normalizes to `premium`. */
+export const checkoutProductTierSchema = z.preprocess(
+  (value) => (value === 'resume' ? 'premium' : value),
+  z.enum(['basic', 'premium']).default('premium')
+)
+
+const extensionIdSchema = z.string().regex(/^[a-p]{32}$/)
+
+export const checkoutRequestSchema = z.object({
+  productTier: checkoutProductTierSchema,
+  extensionId: extensionIdSchema.optional(),
+})
+
 export const checkoutConfirmRequestSchema = z.object({
-  productTier: z.enum(['basic', 'resume']),
+  productTier: checkoutProductTierSchema,
 })
 
 export const checkoutSessionRequestSchema = z.object({
-  productTier: z.enum(['basic', 'resume']),
+  productTier: checkoutProductTierSchema,
   artifactId: z.string().uuid(),
 })
 

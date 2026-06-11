@@ -30,20 +30,9 @@ jobs:
   build-and-push:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
-    env:
-      NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL || secrets.NEXT_PUBLIC_SUPABASE_URL }}
-      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
-      NEXT_PUBLIC_DEMO_UNLOCKS_ENABLED: ${{ vars.NEXT_PUBLIC_DEMO_UNLOCKS_ENABLED || 'false' }}
-      NEXT_PUBLIC_ENABLE_VIBE_SAMPLE: ${{ vars.NEXT_PUBLIC_ENABLE_VIBE_SAMPLE || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Validate build-time public env
-        run: |
-          set -euo pipefail
-          test -n "$NEXT_PUBLIC_SUPABASE_URL" || (echo "NEXT_PUBLIC_SUPABASE_URL is required" >&2; exit 1)
-          test -n "$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" || (echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY is required" >&2; exit 1)
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -66,12 +55,6 @@ jobs:
           push: true
           provenance: false
           sbom: false
-          build-args: |
-            BUILD_NODE_OPTIONS=${{ env.BUILD_NODE_OPTIONS }}
-            NEXT_PUBLIC_SUPABASE_URL=${{ env.NEXT_PUBLIC_SUPABASE_URL }}
-            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
-            NEXT_PUBLIC_DEMO_UNLOCKS_ENABLED=${{ env.NEXT_PUBLIC_DEMO_UNLOCKS_ENABLED }}
-            NEXT_PUBLIC_ENABLE_VIBE_SAMPLE=${{ env.NEXT_PUBLIC_ENABLE_VIBE_SAMPLE }}
           tags: |
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:${{ github.sha }}
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:latest

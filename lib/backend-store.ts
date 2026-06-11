@@ -415,7 +415,7 @@ export async function hasActiveEntitlement(
 
 export async function createPendingOrder(input: {
   userId: string
-  artifactId: string
+  artifactId?: string | null
   productTier: ProductTier
   amount?: number | null
   currency?: string | null
@@ -429,7 +429,7 @@ export async function createPendingOrder(input: {
     `,
     [
       input.userId,
-      input.artifactId,
+      input.artifactId ?? null,
       input.productTier,
       input.amount ?? null,
       input.currency ?? null,
