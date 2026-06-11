@@ -20,7 +20,8 @@ Resume scoring/rewriting is handled separately by the extension's Cloudflare Wor
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/health` | no | Liveness probe |
-| POST | `/auth/signup` | no | Supabase email/password sign-up |
+| POST | `/auth/signup` | no | Supabase email/password sign-up (optional `redirectTo` for confirmation email) |
+| GET | `/auth/confirm` | no | Bridge page: parse signup tokens after email verification |
 | POST | `/auth/login` | no | Email/password sign-in → session tokens |
 | POST | `/auth/refresh` | no | Exchange a refresh token for a new session |
 | POST | `/auth/forgot-password` | no | Send a Supabase password-recovery email |
@@ -196,7 +197,21 @@ Optional: `AUTH_ALLOWED_REDIRECT_PREFIX` — fallback allow-list when `redirectT
 4. Parse `#access_token`, `refresh_token`, `expires_in` from the response URL fragment
 5. Use `Authorization: Bearer <accessToken>` on protected routes; refresh via `POST /auth/refresh`
 
-### 6. Password recovery (extension contract)
+### 6. Signup email confirmation (extension contract)
+
+When Supabase requires email confirmation, the verification link must land on a bridge page instead of the API root.
+
+1. `redirectTo = ${API_BASE}/auth/confirm?extensionId=${chrome.runtime.id}` (see `buildSignupConfirmRedirectUrl` in `lib/extension-pages.ts`)
+2. `POST ${API_BASE}/auth/signup` with `{ email, password, redirectTo }` → `{ user, session }` (`session` is often `null` until the user confirms)
+3. User opens the link from email; Supabase redirects to `redirectTo` with `#access_token`, `refresh_token`, `type=signup` in the fragment
+4. `GET /auth/confirm` serves a bridge page that reads the hash, loads the user via `GET /auth/me`, and messages the extension with `{ type: 'JI_SIGNUP_COMPLETE', user, session }` (requires `externally_connectable`)
+
+Configure allow-lists:
+
+- **Backend:** `AUTH_ALLOWED_REDIRECT_PREFIX=http://localhost:3000/auth/recovery` (or your hosted recovery URL prefix — signup confirm URLs on the same origin are also allowed)
+- **Supabase:** add `https://vibeid.co/auth/confirm` (and local `http://127.0.0.1:3000/auth/confirm`) to redirect URLs; set **Site URL** to your production API origin (e.g. `https://vibeid.co`), not `localhost`
+
+### 7. Password recovery (extension contract)
 
 Supabase sends the reset email; no custom SMTP is required (hosted Supabase uses built-in mail; local CLI captures messages in Inbucket on port `54324`).
 
@@ -209,9 +224,9 @@ Supabase sends the reset email; no custom SMTP is required (hosted Supabase uses
 Configure allow-lists:
 
 - **Backend:** `AUTH_ALLOWED_REDIRECT_PREFIX=http://localhost:3000/auth/recovery` (or your hosted recovery URL prefix)
-- **Supabase:** add `http://127.0.0.1:3000/auth/recovery` (and production equivalent) to redirect URLs; keep `site_url` pointed at Supabase Auth (`http://127.0.0.1:54321` locally), not the Fastify API port
+- **Supabase:** add `http://127.0.0.1:3000/auth/recovery` and `/auth/confirm` (and production equivalents) to redirect URLs
 
-### 7. Verify
+### 8. Verify
 
 ```bash
 # Authorize URL (replace with your extension id)
@@ -222,6 +237,11 @@ curl -s -H "Authorization: Bearer <accessToken>" http://localhost:3000/auth/me
 curl -s -X POST -H "Content-Type: application/json" \
   -d '{"refreshToken":"<refreshToken>"}' http://localhost:3000/auth/refresh
 curl -s -X POST -H "Authorization: Bearer <accessToken>" http://localhost:3000/auth/logout
+
+# Signup with email confirmation (redirectTo must match AUTH_ALLOWED_REDIRECT_PREFIX / Supabase redirect URLs):
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"secret12","redirectTo":"http://localhost:3000/auth/confirm?extensionId=abcdefghijklmnopabcdefghijklmnop"}' \
+  http://localhost:3000/auth/signup
 
 # Password recovery (redirectTo must match AUTH_ALLOWED_REDIRECT_PREFIX / Supabase redirect URLs):
 curl -s -X POST -H "Content-Type: application/json" \
