@@ -1,13 +1,9 @@
 import { Pool, PoolClient, QueryResultRow } from 'pg'
-import { PgBoss } from 'pg-boss'
 
 import { databaseConfigured, requireEnv } from './backend-config'
-import { logError } from './logger'
 
 const globalForDb = globalThis as typeof globalThis & {
   __vibeidPgPool?: Pool
-  __vibeidPgBoss?: PgBoss
-  __vibeidPgBossStart?: Promise<PgBoss>
 }
 
 export { databaseConfigured }
@@ -47,16 +43,4 @@ export async function withTransaction<T>(
   } finally {
     client.release()
   }
-}
-
-export async function getBoss(): Promise<PgBoss> {
-  if (!databaseConfigured()) throw new Error('DATABASE_URL is not configured')
-
-  if (globalForDb.__vibeidPgBossStart) return globalForDb.__vibeidPgBossStart
-
-  const boss = new PgBoss({ connectionString: requireEnv('DATABASE_URL') })
-  boss.on('error', (error) => logError('pg_boss_error', error))
-  globalForDb.__vibeidPgBoss = boss
-  globalForDb.__vibeidPgBossStart = boss.start().then(() => boss)
-  return globalForDb.__vibeidPgBossStart
 }

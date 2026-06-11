@@ -54,7 +54,19 @@ export function billingEnabled(): boolean {
 
 export function getStripePriceId(productTier: ProductTier): string | null {
   if (productTier === 'basic') return getEnv('STRIPE_PRICE_BASIC')
-  return getEnv('STRIPE_PRICE_RESUME')
+  return getEnv('STRIPE_PRICE_PREMIUM') ?? getEnv('STRIPE_PRICE_RESUME')
+}
+
+function looksLikeStripeSecretKey(value: string): boolean {
+  return /^sk_(test|live)_[A-Za-z0-9]+$/.test(value)
+}
+
+function looksLikeStripeWebhookSecret(value: string): boolean {
+  return /^whsec_[A-Za-z0-9]+$/.test(value)
+}
+
+function looksLikeStripePriceId(value: string): boolean {
+  return /^price_[A-Za-z0-9]+$/.test(value)
 }
 
 /**
@@ -72,7 +84,6 @@ export function assertConfig(): void {
 
   // Always required regardless of feature flags
   const alwaysRequired = [
-    'ANTHROPIC_API_KEY',
     'NEXT_PUBLIC_SUPABASE_URL',
     'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
     'DATABASE_URL',
@@ -105,10 +116,38 @@ export function assertConfig(): void {
       }
     }
 
-    // At least one price ID must exist or checkout will always return 503
-    if (!getEnv('STRIPE_PRICE_BASIC') && !getEnv('STRIPE_PRICE_RESUME')) {
+    const stripeSecret = getEnv('STRIPE_SECRET_KEY')
+    if (stripeSecret && !looksLikeStripeSecretKey(stripeSecret)) {
       errors.push(
-        'Neither STRIPE_PRICE_BASIC nor STRIPE_PRICE_RESUME is set (required when BILLING_ENABLED=true)'
+        'STRIPE_SECRET_KEY looks like a placeholder — paste a real key from Stripe Dashboard → Developers → API keys'
+      )
+    }
+
+    const webhookSecret = getEnv('STRIPE_WEBHOOK_SECRET')
+    if (webhookSecret && !looksLikeStripeWebhookSecret(webhookSecret)) {
+      errors.push(
+        'STRIPE_WEBHOOK_SECRET looks like a placeholder — paste the signing secret from Stripe Dashboard → Webhooks'
+      )
+    }
+
+    const basicPriceId = getEnv('STRIPE_PRICE_BASIC')
+    if (basicPriceId && !looksLikeStripePriceId(basicPriceId)) {
+      errors.push(
+        'STRIPE_PRICE_BASIC looks like a placeholder — paste a real Price ID from Stripe Dashboard → Products'
+      )
+    }
+
+    const premiumPriceId = getEnv('STRIPE_PRICE_PREMIUM') ?? getEnv('STRIPE_PRICE_RESUME')
+    if (premiumPriceId && !looksLikeStripePriceId(premiumPriceId)) {
+      errors.push(
+        'STRIPE_PRICE_PREMIUM looks like a placeholder — paste a real Price ID from Stripe Dashboard → Products'
+      )
+    }
+
+    // At least one price ID must exist or checkout will always return 503
+    if (!basicPriceId && !premiumPriceId) {
+      errors.push(
+        'Neither STRIPE_PRICE_BASIC nor STRIPE_PRICE_PREMIUM is set (required when BILLING_ENABLED=true)'
       )
     }
 

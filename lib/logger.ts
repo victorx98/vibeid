@@ -4,8 +4,39 @@ type LogMeta = Record<string, LogValue>
 
 const REDACTED = '[redacted]'
 const MAX_VISIBLE_STRING_LENGTH = 180
-const SENSITIVE_KEY_PATTERN = /(resume|jd|job.?description|prompt|content|text|body|email|phone|token|key|authorization|cookie)/i
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
+
+const SENSITIVE_TOKENS = new Set([
+  'resume',
+  'jd',
+  'prompt',
+  'password',
+  'secret',
+  'token',
+  'key',
+  'authorization',
+  'cookie',
+  'email',
+  'phone',
+  'ssn',
+  'body',
+  'content',
+  'text',
+])
+
+function keyTokens(key: string): string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .split(/[_\-.]+/)
+    .map((token) => token.toLowerCase())
+    .filter(Boolean)
+}
+
+function isSensitiveKey(key: string): boolean {
+  const tokens = keyTokens(key)
+  if (tokens.some((token) => SENSITIVE_TOKENS.has(token))) return true
+  return /job_?description/i.test(key)
+}
 
 function summarizeString(value: string): string {
   if (value.length === 0) return value
@@ -18,7 +49,7 @@ function redactValue(key: string, value: LogValue): LogValue {
   if (value == null) return value
 
   if (typeof value === 'string') {
-    if (SENSITIVE_KEY_PATTERN.test(key)) return REDACTED
+    if (isSensitiveKey(key)) return REDACTED
     return summarizeString(value)
   }
 

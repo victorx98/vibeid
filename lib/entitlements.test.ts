@@ -16,44 +16,44 @@ describe('entitlement tokens', () => {
   })
 
   it('mints and verifies a token carrying the requested tier', () => {
-    const { token } = mintEntitlementToken({ tiers: ['resume'] })
-    const result = verifyEntitlementToken(token, 'resume')
+    const { token } = mintEntitlementToken({ tiers: ['premium'] })
+    const result = verifyEntitlementToken(token, 'premium')
     expect(result.valid).toBe(true)
   })
 
   it('rejects a token missing the required tier', () => {
     const { token } = mintEntitlementToken({ tiers: ['basic'] })
-    const result = verifyEntitlementToken(token, 'resume')
+    const result = verifyEntitlementToken(token, 'premium')
     expect(result).toEqual({ valid: false, reason: 'tier_missing' })
   })
 
   it('rejects an expired token', () => {
-    const { token, expiresAt } = mintEntitlementToken({ tiers: ['resume'], ttlSeconds: 1 })
-    const result = verifyEntitlementToken(token, 'resume', expiresAt + 1)
+    const { token, expiresAt } = mintEntitlementToken({ tiers: ['premium'], ttlSeconds: 1 })
+    const result = verifyEntitlementToken(token, 'premium', expiresAt + 1)
     expect(result).toEqual({ valid: false, reason: 'expired' })
   })
 
   it('rejects a tampered signature', () => {
-    const { token } = mintEntitlementToken({ tiers: ['resume'] })
+    const { token } = mintEntitlementToken({ tiers: ['premium'] })
     const [payload] = token.split('.')
     const tampered = `${payload}.deadbeef`
-    const result = verifyEntitlementToken(tampered, 'resume')
+    const result = verifyEntitlementToken(tampered, 'premium')
     expect(result.valid).toBe(false)
   })
 
   it('rejects malformed tokens', () => {
-    expect(verifyEntitlementToken('', 'resume')).toEqual({ valid: false, reason: 'missing_token' })
-    expect(verifyEntitlementToken('not-a-token', 'resume')).toEqual({
+    expect(verifyEntitlementToken('', 'premium')).toEqual({ valid: false, reason: 'missing_token' })
+    expect(verifyEntitlementToken('not-a-token', 'premium')).toEqual({
       valid: false,
       reason: 'malformed_token',
     })
   })
 
   it('refuses to mint or verify without a strong secret', () => {
-    const { token } = mintEntitlementToken({ tiers: ['resume'] })
+    const { token } = mintEntitlementToken({ tiers: ['premium'] })
     delete process.env.ENTITLEMENTS_SECRET
-    expect(() => mintEntitlementToken({ tiers: ['resume'] })).toThrow()
-    expect(verifyEntitlementToken(token, 'resume')).toEqual({
+    expect(() => mintEntitlementToken({ tiers: ['premium'] })).toThrow()
+    expect(verifyEntitlementToken(token, 'premium')).toEqual({
       valid: false,
       reason: 'secret_unconfigured',
     })
@@ -61,8 +61,8 @@ describe('entitlement tokens', () => {
 
   it('refuses known placeholder secrets', () => {
     process.env.ENTITLEMENTS_SECRET = 'replace-with-at-least-32-characters'
-    expect(() => mintEntitlementToken({ tiers: ['resume'] })).toThrow()
-    expect(verifyEntitlementToken('not.a-real-token', 'resume')).toEqual({
+    expect(() => mintEntitlementToken({ tiers: ['premium'] })).toThrow()
+    expect(verifyEntitlementToken('not.a-real-token', 'premium')).toEqual({
       valid: false,
       reason: 'secret_unconfigured',
     })

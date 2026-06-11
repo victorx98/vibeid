@@ -1,9 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { Buffer } from 'node:buffer'
 
-import type { NextRequest } from 'next/server'
-
-export type EntitlementTier = 'basic' | 'resume'
+export type EntitlementTier = 'basic' | 'premium'
 
 export const ENTITLEMENT_COOKIE_NAME = 'vibeid_entitlement'
 export const ENTITLEMENTS_SECRET_MIN_LENGTH = 32
@@ -133,7 +131,7 @@ export function verifyEntitlementToken(
   return { valid: true, payload }
 }
 
-// Build a Set-Cookie header string matching Next's cookie API shape.
+// Build a Set-Cookie header string for the signed entitlement token.
 export function buildEntitlementCookieHeader(token: string, expiresAt: number): string {
   const maxAge = Math.max(expiresAt - Math.floor(Date.now() / 1000), 0)
   const attrs = [
@@ -145,8 +143,4 @@ export function buildEntitlementCookieHeader(token: string, expiresAt: number): 
   ]
   if (process.env.NODE_ENV === 'production') attrs.push('Secure')
   return attrs.join('; ')
-}
-
-export function readEntitlementCookie(request: NextRequest): string | null {
-  return request.cookies.get(ENTITLEMENT_COOKIE_NAME)?.value ?? null
 }

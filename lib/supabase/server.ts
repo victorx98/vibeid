@@ -1,39 +1,41 @@
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
-import { createServerClient } from '@supabase/ssr'
-import type { User } from '@supabase/supabase-js'
-import type { NextRequest } from 'next/server'
+import type { SupabaseClient, User } from '@supabase/supabase-js'
 
 import {
-  getEnv,
   requireEnv,
   requireSupabaseAdminKey,
   supabaseBrowserConfigured,
   supabaseServerConfigured,
-} from '@/lib/backend-config'
+} from '../backend-config'
 
-export function createSupabaseRouteClient(request: NextRequest) {
+/**
+ * Anonymous (publishable-key) client. Used for password sign-up / sign-in and
+ * refresh-token exchange on behalf of the caller. Never persists sessions —
+ * this process is stateless and hands tokens straight back to the client.
+ */
+export function createSupabaseAnonClient(): SupabaseClient {
   if (!supabaseBrowserConfigured()) {
     throw new Error('Supabase public env is not configured')
   }
 
-  return createServerClient(
+  return createSupabaseClient(
     requireEnv('NEXT_PUBLIC_SUPABASE_URL'),
     requireEnv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY'),
     {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll() {
-          // Token refresh is handled in proxy.ts so route handlers can remain
-          // response-shape focused.
-        },
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
       },
     }
   )
 }
 
-export function createSupabaseAdminClient() {
+/**
+ * Service-role client for privileged operations (token verification, admin
+ * user management). Requires SUPABASE_SECRET_KEY (or the legacy service-role
+ * key fallback).
+ */
+export function createSupabaseAdminClient(): SupabaseClient {
   if (!supabaseServerConfigured()) {
     throw new Error('Supabase server env is not configured')
   }
@@ -50,16 +52,16 @@ export function createSupabaseAdminClient() {
   )
 }
 
-export async function getAuthenticatedUser(
-  request: NextRequest
-): Promise<{ user: User; error: null } | { user: null; error: 'not_configured' | 'unauthorized' }> {
-  if (!getEnv('NEXT_PUBLIC_SUPABASE_URL') || !getEnv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')) {
-    return { user: null, error: 'not_configured' }
-  }
+/**
+ * Verify a Supabase access token (JWT) and return the user it belongs to.
+ * Returns null when the token is missing, invalid, or expired.
+ */
+export async function getUserFromToken(token: string | null | undefined): Promise<User | null> {
+  if (!token || !supabaseServerConfigured()) return null
 
-  const supabase = createSupabaseRouteClient(request)
-  const { data, error } = await supabase.auth.getUser()
-  if (error || !data.user) return { user: null, error: 'unauthorized' }
+  const admin = createSupabaseAdminClient()
+  const { data, error } = await admin.auth.getUser(token)
+  if (error || !data.user) return null
 
-  return { user: data.user, error: null }
+  return data.user
 }
