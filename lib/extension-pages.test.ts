@@ -8,9 +8,13 @@ import {
   buildExtensionPurchaseSuccessPageUrl,
   buildPasswordRecoveryBridgeHtml,
   buildPasswordRecoveryRedirectUrl,
+  buildSignupConfirmBridgeHtml,
+  buildSignupConfirmRedirectUrl,
+  isAllowedAuthBridgeRedirect,
   isValidExtensionId,
   PASSWORD_RECOVERY_PAGE_PATH,
   resolveExtensionId,
+  SIGNUP_CONFIRM_PAGE_PATH,
 } from './extension-pages'
 
 const EXT_ID = 'abcdefghijklmnopabcdefghijklmnop'
@@ -87,5 +91,37 @@ describe('extension page helpers', () => {
     const html = buildPasswordRecoveryBridgeHtml(null)
     expect(html).toContain('var extensionId = null')
     expect(html).toContain('/auth/reset-password')
+  })
+
+  it('builds signup confirmation redirect URLs', () => {
+    expect(SIGNUP_CONFIRM_PAGE_PATH).toBe('/auth/confirm')
+    expect(buildSignupConfirmRedirectUrl('http://localhost:3000', EXT_ID)).toBe(
+      `http://localhost:3000/auth/confirm?extensionId=${EXT_ID}`
+    )
+  })
+
+  it('allows signup confirm redirects on the same origin as the recovery prefix', () => {
+    const prefix = 'http://localhost:3000/auth/recovery'
+    expect(
+      isAllowedAuthBridgeRedirect(
+        `http://localhost:3000/auth/confirm?extensionId=${EXT_ID}`,
+        prefix
+      )
+    ).toBe(true)
+    expect(isAllowedAuthBridgeRedirect('https://evil.example/auth/confirm', prefix)).toBe(false)
+  })
+
+  it('renders a signup confirmation bridge page that messages the extension', () => {
+    const html = buildSignupConfirmBridgeHtml(EXT_ID)
+    expect(html).toContain(EXT_ID)
+    expect(html).toContain('JI_SIGNUP_COMPLETE')
+    expect(html).toContain('/auth/me')
+    expect(html).toContain("signupTokens.type !== 'signup'")
+  })
+
+  it('renders signup confirmation without extension id when extensionId is absent', () => {
+    const html = buildSignupConfirmBridgeHtml(null)
+    expect(html).toContain('var extensionId = null')
+    expect(html).toContain('/auth/me')
   })
 })

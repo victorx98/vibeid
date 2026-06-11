@@ -1,3 +1,5 @@
+import { isAllowedOAuthRedirect } from './google-oauth'
+
 /** Chrome extension IDs use 32 lowercase a–p characters. */
 const EXTENSION_ID_RE = /^[a-p]{32}$/
 
@@ -31,9 +33,38 @@ export function appendExtensionIdToUrl(baseUrl: string, extensionId: string): st
 /** Path for the password-recovery bridge page (also used in redirect allow-lists). */
 export const PASSWORD_RECOVERY_PAGE_PATH = '/auth/recovery'
 
+/** Path for the signup email-confirmation bridge page (also used in redirect allow-lists). */
+export const SIGNUP_CONFIRM_PAGE_PATH = '/auth/confirm'
+
 export function buildPasswordRecoveryRedirectUrl(apiBase: string, extensionId: string): string {
   const base = apiBase.replace(/\/+$/, '')
   return appendExtensionIdToUrl(`${base}${PASSWORD_RECOVERY_PAGE_PATH}`, extensionId)
+}
+
+export function buildSignupConfirmRedirectUrl(apiBase: string, extensionId: string): string {
+  const base = apiBase.replace(/\/+$/, '')
+  return appendExtensionIdToUrl(`${base}${SIGNUP_CONFIRM_PAGE_PATH}`, extensionId)
+}
+
+/** Allow chromiumapp.org, prefix matches, or sibling auth bridge pages on the same origin. */
+export function isAllowedAuthBridgeRedirect(
+  redirectTo: string,
+  allowedPrefix: string | null | undefined
+): boolean {
+  if (isAllowedOAuthRedirect(redirectTo, allowedPrefix)) return true
+  if (!allowedPrefix) return false
+
+  try {
+    const redirectUrl = new URL(redirectTo)
+    const prefixUrl = new URL(allowedPrefix)
+    if (redirectUrl.origin !== prefixUrl.origin) return false
+    return (
+      redirectUrl.pathname === SIGNUP_CONFIRM_PAGE_PATH ||
+      redirectUrl.pathname === PASSWORD_RECOVERY_PAGE_PATH
+    )
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -341,6 +372,158 @@ export function buildPasswordRecoveryBridgeHtml(extensionId: string | null): str
           submitButton.textContent = 'Update password';
         });
     });
+  })();
+  </script>
+</body>
+</html>`
+}
+
+/**
+ * Signup-confirmation bridge page. Supabase redirects here with session tokens in the
+ * URL hash after the user verifies their email; the page optionally messages the
+ * extension (externally_connectable) with the confirmed session.
+ */
+export function buildSignupConfirmBridgeHtml(extensionId: string | null): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Confirm email — EdAIX</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 28rem; margin: 4rem auto; padding: 0 1rem; color: #111; }
+    h1 { font-size: 1.25rem; margin: 0 0 1rem; text-align: center; }
+    p { margin: 0 0 1rem; line-height: 1.5; text-align: center; }
+    .hidden { display: none; }
+    .error { color: #b00020; text-align: center; }
+    .success { color: #0d652d; }
+    button { font: inherit; font-size: 1rem; padding: 0.75rem 1.25rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="loading-panel">
+    <h1>Confirming your email…</h1>
+    <p id="status">Please wait while we finish setting up your EdAIX account.</p>
+  </div>
+  <div id="error-panel" class="hidden">
+    <h1>Confirmation link invalid</h1>
+    <p id="error-message" class="error"></p>
+    <p>Request a new confirmation email from the EdAIX extension and try again.</p>
+  </div>
+  <div id="success-panel" class="hidden success">
+    <h1>Email confirmed</h1>
+    <p id="success-message">You can close this tab and return to EdAIX.</p>
+    <button id="retry" class="hidden" type="button">Return to EdAIX</button>
+  </div>
+  <script>
+  (function () {
+    var extensionId = ${JSON.stringify(extensionId)};
+    var loadingPanel = document.getElementById('loading-panel');
+    var status = document.getElementById('status');
+    var errorPanel = document.getElementById('error-panel');
+    var errorMessage = document.getElementById('error-message');
+    var successPanel = document.getElementById('success-panel');
+    var successMessage = document.getElementById('success-message');
+    var retry = document.getElementById('retry');
+    var signupTokens = null;
+
+    function showError(message) {
+      loadingPanel.classList.add('hidden');
+      errorMessage.textContent = message;
+      errorPanel.classList.remove('hidden');
+      successPanel.classList.add('hidden');
+    }
+
+    function showSuccess(message) {
+      loadingPanel.classList.add('hidden');
+      successMessage.textContent = message;
+      successPanel.classList.remove('hidden');
+    }
+
+    function parseHash() {
+      var hash = window.location.hash.replace(/^#/, '');
+      if (!hash) return null;
+      var params = new URLSearchParams(hash);
+      return {
+        accessToken: params.get('access_token'),
+        refreshToken: params.get('refresh_token'),
+        type: params.get('type'),
+      };
+    }
+
+    function notifyExtension(payload) {
+      if (!extensionId) return Promise.resolve(false);
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+        return Promise.resolve(false);
+      }
+      return new Promise(function (resolve) {
+        chrome.runtime.sendMessage(
+          extensionId,
+          { type: 'JI_SIGNUP_COMPLETE', user: payload.user, session: payload.session },
+          function (response) {
+            if (chrome.runtime.lastError || !response || !response.ok) {
+              resolve(false);
+              return;
+            }
+            resolve(true);
+          }
+        );
+      });
+    }
+
+    function returnToExtension() {
+      if (!signupTokens) return;
+      fetch('/auth/me', {
+        headers: { Authorization: 'Bearer ' + signupTokens.accessToken },
+      })
+        .then(function (response) {
+          return response.json().then(function (body) {
+            return { ok: response.ok, body: body };
+          });
+        })
+        .then(function (result) {
+          if (!result.ok || !result.body || !result.body.user) {
+            showError('Could not load your account after confirmation.');
+            return;
+          }
+
+          var session = {
+            accessToken: signupTokens.accessToken,
+            refreshToken: signupTokens.refreshToken,
+          };
+
+          return notifyExtension({ user: result.body.user, session: session }).then(function (delivered) {
+            if (delivered) {
+              showSuccess('Email confirmed. Returning to EdAIX…');
+              window.close();
+              return;
+            }
+            if (extensionId) {
+              showSuccess('Email confirmed. Open the EdAIX extension from your browser toolbar to continue.');
+              retry.classList.remove('hidden');
+            } else {
+              showSuccess('Email confirmed. You can close this tab and sign in to EdAIX.');
+            }
+          });
+        })
+        .catch(function () {
+          showError('Network error. Please try again.');
+        });
+    }
+
+    signupTokens = parseHash();
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+
+    if (!signupTokens || !signupTokens.accessToken || !signupTokens.refreshToken) {
+      showError('This confirmation link is missing required session tokens.');
+    } else if (signupTokens.type !== 'signup') {
+      showError('This link is not a signup confirmation link.');
+    } else {
+      returnToExtension();
+    }
+
+    retry.addEventListener('click', returnToExtension);
   })();
   </script>
 </body>

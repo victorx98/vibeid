@@ -4,6 +4,8 @@ import { z, ZodError } from 'zod'
 import { getEnv, requireEnv } from '../../lib/backend-config'
 import {
   buildPasswordRecoveryBridgeHtml,
+  buildSignupConfirmBridgeHtml,
+  isAllowedAuthBridgeRedirect,
   resolveExtensionId,
 } from '../../lib/extension-pages'
 import { buildGoogleAuthorizeUrl, isAllowedOAuthRedirect } from '../../lib/google-oauth'
@@ -13,6 +15,10 @@ import { createSupabaseAdminClient, createSupabaseAnonClient } from '../../lib/s
 const credentialsSchema = z.object({
   email: z.email().max(320),
   password: z.string().min(6).max(200),
+})
+
+const signupSchema = credentialsSchema.extend({
+  redirectTo: z.url().max(2000).optional(),
 })
 
 const refreshSchema = z.object({
@@ -58,9 +64,20 @@ function serializeUser(user: { id: string; email?: string | null } | null) {
 export default async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/auth/signup', async (request, reply) => {
     try {
-      const { email, password } = credentialsSchema.parse(request.body)
+      const { email, password, redirectTo } = signupSchema.parse(request.body)
+      if (
+        redirectTo &&
+        !isAllowedAuthBridgeRedirect(redirectTo, getEnv('AUTH_ALLOWED_REDIRECT_PREFIX'))
+      ) {
+        return reply.code(400).send({ error: 'redirect_not_allowed' })
+      }
+
       const supabase = createSupabaseAnonClient()
-      const { data, error } = await supabase.auth.signUp({ email, password })
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: redirectTo ? { emailRedirectTo: redirectTo } : undefined,
+      })
 
       if (error) {
         return reply.code(400).send({ error: error.message })
@@ -145,6 +162,17 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/auth/me', { preHandler: app.authenticate }, async (request, reply) => {
     return reply.send({ user: request.authUser })
+  })
+
+  // Bridge page for signup email-confirmation redirects. Supabase lands here with
+  // session tokens in the URL hash; optional ?extensionId= passes session back to the extension.
+  app.get('/auth/confirm', async (request, reply) => {
+    const query = request.query as { extensionId?: string }
+    const extensionId = resolveExtensionId(query.extensionId, getEnv('EXTENSION_ID'))
+
+    return reply
+      .type('text/html; charset=utf-8')
+      .send(buildSignupConfirmBridgeHtml(extensionId))
   })
 
   // Bridge page for password-recovery email redirects. Supabase lands here with
