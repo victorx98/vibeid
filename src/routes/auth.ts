@@ -7,6 +7,7 @@ import {
   buildSignupConfirmBridgeHtml,
   isAllowedAuthBridgeRedirect,
   resolveExtensionId,
+  resolveSignupEmailRedirectTo,
 } from '../../lib/extension-pages'
 import { buildGoogleAuthorizeUrl, isAllowedOAuthRedirect } from '../../lib/google-oauth'
 import { logError } from '../../lib/logger'
@@ -65,9 +66,16 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/auth/signup', async (request, reply) => {
     try {
       const { email, password, redirectTo } = signupSchema.parse(request.body)
+      const allowedPrefix = getEnv('AUTH_ALLOWED_REDIRECT_PREFIX')
+      const emailRedirectTo = resolveSignupEmailRedirectTo(
+        redirectTo,
+        allowedPrefix,
+        resolveExtensionId(undefined, getEnv('EXTENSION_ID'))
+      )
+
       if (
-        redirectTo &&
-        !isAllowedAuthBridgeRedirect(redirectTo, getEnv('AUTH_ALLOWED_REDIRECT_PREFIX'))
+        emailRedirectTo &&
+        !isAllowedAuthBridgeRedirect(emailRedirectTo, allowedPrefix)
       ) {
         return reply.code(400).send({ error: 'redirect_not_allowed' })
       }
@@ -76,7 +84,7 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: redirectTo ? { emailRedirectTo: redirectTo } : undefined,
+        options: emailRedirectTo ? { emailRedirectTo } : undefined,
       })
 
       if (error) {

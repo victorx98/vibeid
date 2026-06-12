@@ -8,7 +8,7 @@ describe('GET /checkout/success', () => {
     process.env = { ...ORIGINAL_ENV }
   })
 
-  it('serves a bridge page that asks the extension to open success.html', async () => {
+  it('serves a bridge page that redirects to extension success.html', async () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://test.supabase.co'
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_test'
     process.env.SUPABASE_SECRET_KEY = 'sb_secret_test'
@@ -24,8 +24,8 @@ describe('GET /checkout/success', () => {
 
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('text/html')
-    expect(res.body).toContain(EXT_ID)
-    expect(res.body).toContain('JI_CHECKOUT_SUCCESS_RETURN')
+    expect(res.body).toContain(`chrome-extension://${EXT_ID}/purchase/success.html`)
+    expect(res.body).toContain('window.location.replace')
   })
 
   it('rejects success redirects without a valid extension id', async () => {
@@ -56,7 +56,7 @@ describe('GET /checkout/cancel', () => {
     process.env = { ...ORIGINAL_ENV }
   })
 
-  it('serves a bridge page that asks the extension to reopen purchase.html', async () => {
+  it('serves a bridge page that redirects to extension purchase.html', async () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://test.supabase.co'
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_test'
     process.env.SUPABASE_SECRET_KEY = 'sb_secret_test'
@@ -72,8 +72,8 @@ describe('GET /checkout/cancel', () => {
 
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('text/html')
-    expect(res.body).toContain(EXT_ID)
-    expect(res.body).toContain('JI_CHECKOUT_CANCEL_RETURN')
+    expect(res.body).toContain(`chrome-extension://${EXT_ID}/purchase/purchase.html`)
+    expect(res.body).toContain('window.location.replace')
   })
 
   it('rejects cancel redirects without a valid extension id', async () => {
