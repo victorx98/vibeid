@@ -13,6 +13,7 @@ import {
   isAllowedAuthBridgeRedirect,
   isValidExtensionId,
   PASSWORD_RECOVERY_PAGE_PATH,
+  resolveDefaultSignupRedirectTo,
   resolveExtensionId,
   SIGNUP_CONFIRM_PAGE_PATH,
 } from './extension-pages'
@@ -56,20 +57,20 @@ describe('extension page helpers', () => {
     )
   })
 
-  it('renders a cancel bridge page that messages the extension instead of redirecting', () => {
+  it('renders a cancel bridge page that redirects to purchase.html', () => {
     const html = buildCheckoutCancelBridgeHtml(EXT_ID)
-    expect(html).toContain(EXT_ID)
-    expect(html).toContain('JI_CHECKOUT_CANCEL_RETURN')
-    expect(html).toContain('chrome.runtime.sendMessage')
-    expect(html).not.toContain('window.location.replace')
+    const targetUrl = `chrome-extension://${EXT_ID}/purchase/purchase.html`
+    expect(html).toContain(targetUrl)
+    expect(html).toContain('window.location.replace')
+    expect(html).not.toContain('chrome.runtime.sendMessage')
   })
 
-  it('renders a success bridge page that messages the extension instead of redirecting', () => {
+  it('renders a success bridge page that redirects to success.html', () => {
     const html = buildCheckoutSuccessBridgeHtml(EXT_ID)
-    expect(html).toContain(EXT_ID)
-    expect(html).toContain('JI_CHECKOUT_SUCCESS_RETURN')
-    expect(html).toContain('chrome.runtime.sendMessage')
-    expect(html).not.toContain('window.location.replace')
+    const targetUrl = `chrome-extension://${EXT_ID}/purchase/success.html`
+    expect(html).toContain(targetUrl)
+    expect(html).toContain('window.location.replace')
+    expect(html).not.toContain('chrome.runtime.sendMessage')
   })
 
   it('builds password recovery redirect URLs', () => {
@@ -98,6 +99,16 @@ describe('extension page helpers', () => {
     expect(buildSignupConfirmRedirectUrl('http://localhost:3000', EXT_ID)).toBe(
       `http://localhost:3000/auth/confirm?extensionId=${EXT_ID}`
     )
+  })
+
+  it('derives default signup redirects from AUTH_ALLOWED_REDIRECT_PREFIX', () => {
+    expect(
+      resolveDefaultSignupRedirectTo('https://vibeid.co/auth/recovery', EXT_ID)
+    ).toBe(`https://vibeid.co/auth/confirm?extensionId=${EXT_ID}`)
+    expect(resolveDefaultSignupRedirectTo('https://vibeid.co/auth/recovery', null)).toBe(
+      'https://vibeid.co/auth/confirm'
+    )
+    expect(resolveDefaultSignupRedirectTo(null, EXT_ID)).toBeNull()
   })
 
   it('allows signup confirm redirects on the same origin as the recovery prefix', () => {

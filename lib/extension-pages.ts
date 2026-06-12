@@ -46,6 +46,33 @@ export function buildSignupConfirmRedirectUrl(apiBase: string, extensionId: stri
   return appendExtensionIdToUrl(`${base}${SIGNUP_CONFIRM_PAGE_PATH}`, extensionId)
 }
 
+/** Default signup confirmation redirect when the client omits redirectTo. */
+export function resolveDefaultSignupRedirectTo(
+  allowedPrefix: string | null | undefined,
+  extensionId: string | null | undefined
+): string | null {
+  if (!allowedPrefix) return null
+
+  try {
+    const origin = new URL(allowedPrefix).origin
+    if (extensionId && isValidExtensionId(extensionId)) {
+      return buildSignupConfirmRedirectUrl(origin, extensionId)
+    }
+    return `${origin.replace(/\/+$/, '')}${SIGNUP_CONFIRM_PAGE_PATH}`
+  } catch {
+    return null
+  }
+}
+
+export function resolveSignupEmailRedirectTo(
+  redirectTo: string | undefined,
+  allowedPrefix: string | null | undefined,
+  extensionId: string | null | undefined
+): string | null {
+  if (redirectTo) return redirectTo
+  return resolveDefaultSignupRedirectTo(allowedPrefix, extensionId)
+}
+
 /** Allow chromiumapp.org, prefix matches, or sibling auth bridge pages on the same origin. */
 export function isAllowedAuthBridgeRedirect(
   redirectTo: string,
@@ -68,60 +95,29 @@ export function isAllowedAuthBridgeRedirect(
 }
 
 /**
- * Stripe cancel bridge page. Chrome blocks script redirects to chrome-extension://,
- * so we ask the installed extension (via externally_connectable) to open purchase.html.
+ * Stripe cancel bridge page. Redirects to the extension purchase page using a
+ * server-built chrome-extension:// URL (Stripe lands here via CHECKOUT_CANCEL_URL).
  */
 export function buildCheckoutCancelBridgeHtml(extensionId: string): string {
+  const targetUrl = buildExtensionPurchasePageUrl(extensionId)
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>EdAIX</title>
+  <meta http-equiv="refresh" content="0;url=${targetUrl}">
   <style>
     body { font-family: system-ui, sans-serif; max-width: 28rem; margin: 4rem auto; padding: 0 1rem; text-align: center; color: #111; }
-    .hidden { display: none; }
-    button { font: inherit; font-size: 1rem; padding: 0.75rem 1.25rem; cursor: pointer; }
+    a { color: #1a73e8; }
   </style>
 </head>
 <body>
-  <p id="status">Returning to EdAIX…</p>
-  <p id="fallback" class="hidden">Payment was cancelled. Open the EdAIX extension from your browser toolbar to continue.</p>
-  <button id="retry" class="hidden" type="button">Try again</button>
+  <p>Payment was cancelled. Returning to EdAIX…</p>
+  <p>If you are not redirected, <a id="continue" href="${targetUrl}">continue in EdAIX</a>.</p>
   <script>
   (function () {
-    var extensionId = ${JSON.stringify(extensionId)};
-    var status = document.getElementById('status');
-    var fallback = document.getElementById('fallback');
-    var retry = document.getElementById('retry');
-
-    function showFallback() {
-      status.textContent = 'Could not open EdAIX automatically.';
-      fallback.classList.remove('hidden');
-      retry.classList.remove('hidden');
-    }
-
-    function returnToExtension() {
-      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
-        showFallback();
-        return;
-      }
-      document.body.style.visibility = 'hidden';
-      chrome.runtime.sendMessage(
-        extensionId,
-        { type: 'JI_CHECKOUT_CANCEL_RETURN' },
-        function (response) {
-          if (chrome.runtime.lastError || !response || !response.ok) {
-            document.body.style.visibility = '';
-            showFallback();
-            return;
-          }
-          window.close();
-        }
-      );
-    }
-
-    retry.addEventListener('click', returnToExtension);
-    returnToExtension();
+    var targetUrl = ${JSON.stringify(targetUrl)};
+    window.location.replace(targetUrl);
   })();
   </script>
 </body>
@@ -129,60 +125,29 @@ export function buildCheckoutCancelBridgeHtml(extensionId: string): string {
 }
 
 /**
- * Stripe success bridge page. Chrome blocks script redirects to chrome-extension://,
- * so we ask the installed extension (via externally_connectable) to open success.html.
+ * Stripe success bridge page. Redirects to the extension purchase-success page
+ * using a server-built chrome-extension:// URL (Stripe lands here via CHECKOUT_SUCCESS_URL).
  */
 export function buildCheckoutSuccessBridgeHtml(extensionId: string): string {
+  const targetUrl = buildExtensionPurchaseSuccessPageUrl(extensionId)
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>EdAIX</title>
+  <meta http-equiv="refresh" content="0;url=${targetUrl}">
   <style>
     body { font-family: system-ui, sans-serif; max-width: 28rem; margin: 4rem auto; padding: 0 1rem; text-align: center; color: #111; }
-    .hidden { display: none; }
-    button { font: inherit; font-size: 1rem; padding: 0.75rem 1.25rem; cursor: pointer; }
+    a { color: #1a73e8; }
   </style>
 </head>
 <body>
-  <p id="status">Payment successful. Returning to EdAIX…</p>
-  <p id="fallback" class="hidden">Payment successful. Open the EdAIX extension from your browser toolbar to continue.</p>
-  <button id="retry" class="hidden" type="button">Continue in EdAIX</button>
+  <p>Payment successful. Returning to EdAIX…</p>
+  <p>If you are not redirected, <a id="continue" href="${targetUrl}">continue in EdAIX</a>.</p>
   <script>
   (function () {
-    var extensionId = ${JSON.stringify(extensionId)};
-    var status = document.getElementById('status');
-    var fallback = document.getElementById('fallback');
-    var retry = document.getElementById('retry');
-
-    function showFallback() {
-      status.textContent = 'Could not open EdAIX automatically.';
-      fallback.classList.remove('hidden');
-      retry.classList.remove('hidden');
-    }
-
-    function returnToExtension() {
-      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
-        showFallback();
-        return;
-      }
-      document.body.style.visibility = 'hidden';
-      chrome.runtime.sendMessage(
-        extensionId,
-        { type: 'JI_CHECKOUT_SUCCESS_RETURN' },
-        function (response) {
-          if (chrome.runtime.lastError || !response || !response.ok) {
-            document.body.style.visibility = '';
-            showFallback();
-            return;
-          }
-          window.close();
-        }
-      );
-    }
-
-    retry.addEventListener('click', returnToExtension);
-    returnToExtension();
+    var targetUrl = ${JSON.stringify(targetUrl)};
+    window.location.replace(targetUrl);
   })();
   </script>
 </body>

@@ -100,8 +100,32 @@ describe('POST /auth/signup', () => {
     })
   })
 
-  it('signs up without emailRedirectTo when redirectTo is omitted', async () => {
+  it('derives emailRedirectTo from AUTH_ALLOWED_REDIRECT_PREFIX when redirectTo is omitted', async () => {
     setTestEnv()
+
+    const { buildApp } = await import('../src/app')
+    const app = await buildApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/signup',
+      payload: {
+        email: 'new@example.com',
+        password: 'secret12',
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(authMocks.signUp).toHaveBeenCalledWith({
+      email: 'new@example.com',
+      password: 'secret12',
+      options: { emailRedirectTo: 'http://localhost:3000/auth/confirm' },
+    })
+  })
+
+  it('signs up without emailRedirectTo when redirect prefix is not configured', async () => {
+    setTestEnv()
+    delete process.env.AUTH_ALLOWED_REDIRECT_PREFIX
 
     const { buildApp } = await import('../src/app')
     const app = await buildApp()
