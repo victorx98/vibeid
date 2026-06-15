@@ -165,16 +165,16 @@ site_url = "http://127.0.0.1:3000"
 # Hosted Supabase: mirror these under Dashboard → Authentication → URL Configuration
 # (Site URL = https://vibeid.co, not localhost).
 additional_redirect_urls = [
-  "http://127.0.0.1:3000/auth/recovery",
-  "https://127.0.0.1:3000/auth/recovery",
-  "http://127.0.0.1:3000/auth/confirm",
-  "https://127.0.0.1:3000/auth/confirm",
-  "http://localhost:3000/auth/recovery",
-  "https://localhost:3000/auth/recovery",
-  "http://localhost:3000/auth/confirm",
-  "https://localhost:3000/auth/confirm",
-  "https://vibeid.co/auth/recovery",
-  "https://vibeid.co/auth/confirm",
+  "http://127.0.0.1:3000/auth/recovery**",
+  "https://127.0.0.1:3000/auth/recovery**",
+  "http://127.0.0.1:3000/auth/confirm**",
+  "https://127.0.0.1:3000/auth/confirm**",
+  "http://localhost:3000/auth/recovery**",
+  "https://localhost:3000/auth/recovery**",
+  "http://localhost:3000/auth/confirm**",
+  "https://localhost:3000/auth/confirm**",
+  "https://test123.vibeid.co/auth/recovery**",
+  "https://test123.vibeid.co/auth/confirm**",
 ]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
