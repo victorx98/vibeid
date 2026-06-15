@@ -20,17 +20,7 @@ export function getEnv(name: string): string | null {
  * an existing checkout URL without a separate env var.
  */
 export function getAllowedOAuthRedirectPrefix(): string | null {
-  const explicit = getEnv('AUTH_ALLOWED_REDIRECT_PREFIX')
-  if (explicit) return explicit
-
-  const checkoutSuccessUrl = getEnv('CHECKOUT_SUCCESS_URL')
-  if (!checkoutSuccessUrl) return null
-
-  try {
-    return `${new URL(checkoutSuccessUrl).origin}/auth/recovery`
-  } catch {
-    return null
-  }
+    return getEnv('AUTH_ALLOWED_REDIRECT_PREFIX')
 }
 
 export function requireEnv(name: string): string {
