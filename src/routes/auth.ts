@@ -200,7 +200,7 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
     try {
       const { email, redirectTo } = forgotPasswordSchema.parse(request.body)
       if (!isAllowedOAuthRedirect(redirectTo, getEnv('AUTH_ALLOWED_REDIRECT_PREFIX'))) {
-        return reply.code(400).send({ error: 'redirect_not_allowed' })
+        return reply.code(401).send({ error: 'redirect_not_allowed' })
       }
 
       const supabase = createSupabaseAnonClient()
