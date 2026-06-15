@@ -139,6 +139,59 @@ describe('POST /auth/forgot-password', () => {
     expect(res.json()).toEqual({ ok: true })
   })
 
+  it('returns rate_limited when Supabase throttles email sends', async () => {
+    setTestEnv()
+    authMocks.resetPasswordForEmail.mockResolvedValue({
+      error: {
+        status: 429,
+        code: 'over_email_send_rate_limit',
+        message: 'email rate limit exceeded',
+      },
+    })
+
+    const { buildApp } = await import('../src/app')
+    const app = await buildApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/forgot-password',
+      payload: {
+        email: 'user@example.com',
+        redirectTo: RECOVERY_REDIRECT,
+      },
+    })
+
+    expect(res.statusCode).toBe(429)
+    expect(res.headers['retry-after']).toBe('60')
+    expect(res.json()).toEqual({ error: 'rate_limited', retryAfterSeconds: 60 })
+  })
+
+  it('returns rate_limited with parsed retry window for per-user cooldowns', async () => {
+    setTestEnv()
+    authMocks.resetPasswordForEmail.mockResolvedValue({
+      error: {
+        status: 429,
+        message: 'For security purposes, you can only request this once every 45 seconds',
+      },
+    })
+
+    const { buildApp } = await import('../src/app')
+    const app = await buildApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/forgot-password',
+      payload: {
+        email: 'user@example.com',
+        redirectTo: RECOVERY_REDIRECT,
+      },
+    })
+
+    expect(res.statusCode).toBe(429)
+    expect(res.headers['retry-after']).toBe('45')
+    expect(res.json()).toEqual({ error: 'rate_limited', retryAfterSeconds: 45 })
+  })
+
   it('rejects disallowed redirect targets', async () => {
     setTestEnv()
     delete process.env.AUTH_ALLOWED_REDIRECT_PREFIX

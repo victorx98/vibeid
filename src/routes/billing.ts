@@ -100,11 +100,6 @@ export default async function billingRoutes(app: FastifyInstance): Promise<void>
       return reply.code(429).send({ error: '请求过于频繁，请稍后再试' })
     }
 
-    if (billingKillSwitchEnabled || !billingEnabled()) {
-      logWarn('checkout_refused_billing_disabled')
-      return reply.code(503).send({ error: '支付系统暂时不可用，请稍后再试' })
-    }
-
     if (!databaseConfigured()) {
       return reply.code(503).send({ error: '订单系统未配置，请稍后再试' })
     }
