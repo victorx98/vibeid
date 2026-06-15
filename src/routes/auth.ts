@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z, ZodError } from 'zod'
 
-import { getAllowedOAuthRedirectPrefix, getEnv, requireEnv } from '../../lib/backend-config'
+import { getEnv, requireEnv } from '../../lib/backend-config'
 import {
   buildPasswordRecoveryBridgeHtml,
   buildSignupConfirmBridgeHtml,
@@ -66,7 +66,7 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/auth/signup', async (request, reply) => {
     try {
       const { email, password, redirectTo } = signupSchema.parse(request.body)
-      const allowedPrefix = getAllowedOAuthRedirectPrefix()
+      const allowedPrefix = getEnv('AUTH_ALLOWED_REDIRECT_PREFIX')
       const emailRedirectTo = resolveSignupEmailRedirectTo(
         redirectTo,
         allowedPrefix,
@@ -195,11 +195,11 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
   })
 
   // Sends a Supabase password-recovery email. redirectTo must be allow-listed in
-  // Supabase and match getAllowedOAuthRedirectPrefix() or a chromiumapp.org URL.
+  // Supabase and match AUTH_ALLOWED_REDIRECT_PREFIX or a chromiumapp.org URL.
   app.post('/auth/forgot-password', async (request, reply) => {
     try {
       const { email, redirectTo } = forgotPasswordSchema.parse(request.body)
-      if (!isAllowedOAuthRedirect(redirectTo, getAllowedOAuthRedirectPrefix())) {
+      if (!isAllowedOAuthRedirect(redirectTo, getEnv('AUTH_ALLOWED_REDIRECT_PREFIX'))) {
         return reply.code(400).send({ error: 'redirect_not_allowed' })
       }
 
@@ -268,7 +268,7 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
   app.get('/auth/google/url', async (request, reply) => {
     try {
       const { redirectTo } = googleUrlSchema.parse(request.query)
-      if (!isAllowedOAuthRedirect(redirectTo, getAllowedOAuthRedirectPrefix())) {
+      if (!isAllowedOAuthRedirect(redirectTo, getEnv('AUTH_ALLOWED_REDIRECT_PREFIX'))) {
         return reply.code(400).send({ error: 'redirect_not_allowed' })
       }
 

@@ -1,14 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { getAllowedOAuthRedirectPrefix, getSupabaseAdminKey, supabaseServerConfigured } from './backend-config'
+import { getSupabaseAdminKey, supabaseServerConfigured } from './backend-config'
 
 const ORIGINAL_ENV = {
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   SUPABASE_SECRET_KEY: process.env.SUPABASE_SECRET_KEY,
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  AUTH_ALLOWED_REDIRECT_PREFIX: process.env.AUTH_ALLOWED_REDIRECT_PREFIX,
-  CHECKOUT_SUCCESS_URL: process.env.CHECKOUT_SUCCESS_URL,
 }
 
 function restoreEnv() {
@@ -42,26 +40,5 @@ describe('backend config', () => {
     delete process.env.SUPABASE_SERVICE_ROLE_KEY
 
     expect(supabaseServerConfigured()).toBe(true)
-  })
-
-  it('prefers AUTH_ALLOWED_REDIRECT_PREFIX over CHECKOUT_SUCCESS_URL', () => {
-    process.env.AUTH_ALLOWED_REDIRECT_PREFIX = 'https://app.example.com/auth/recovery'
-    process.env.CHECKOUT_SUCCESS_URL = 'https://other.example.com/checkout/success'
-
-    expect(getAllowedOAuthRedirectPrefix()).toBe('https://app.example.com/auth/recovery')
-  })
-
-  it('derives recovery redirect prefix from CHECKOUT_SUCCESS_URL origin', () => {
-    delete process.env.AUTH_ALLOWED_REDIRECT_PREFIX
-    process.env.CHECKOUT_SUCCESS_URL = 'https://test123.vibeid.co/checkout/success'
-
-    expect(getAllowedOAuthRedirectPrefix()).toBe('https://test123.vibeid.co/auth/recovery')
-  })
-
-  it('returns null when neither redirect prefix env is configured', () => {
-    delete process.env.AUTH_ALLOWED_REDIRECT_PREFIX
-    delete process.env.CHECKOUT_SUCCESS_URL
-
-    expect(getAllowedOAuthRedirectPrefix()).toBeNull()
   })
 })

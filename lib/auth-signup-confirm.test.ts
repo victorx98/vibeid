@@ -126,7 +126,6 @@ describe('POST /auth/signup', () => {
   it('signs up without emailRedirectTo when redirect prefix is not configured', async () => {
     setTestEnv()
     delete process.env.AUTH_ALLOWED_REDIRECT_PREFIX
-    delete process.env.CHECKOUT_SUCCESS_URL
 
     const { buildApp } = await import('../src/app')
     const app = await buildApp()
@@ -151,7 +150,6 @@ describe('POST /auth/signup', () => {
   it('rejects disallowed redirect targets', async () => {
     setTestEnv()
     delete process.env.AUTH_ALLOWED_REDIRECT_PREFIX
-    delete process.env.CHECKOUT_SUCCESS_URL
 
     const { buildApp } = await import('../src/app')
     const app = await buildApp()
@@ -169,32 +167,5 @@ describe('POST /auth/signup', () => {
     expect(res.statusCode).toBe(400)
     expect(res.json()).toEqual({ error: 'redirect_not_allowed' })
     expect(authMocks.signUp).not.toHaveBeenCalled()
-  })
-
-  it('allows signup confirm redirects derived from CHECKOUT_SUCCESS_URL', async () => {
-    setTestEnv()
-    delete process.env.AUTH_ALLOWED_REDIRECT_PREFIX
-    process.env.CHECKOUT_SUCCESS_URL = 'https://test123.vibeid.co/checkout/success'
-    const derivedRedirect = `https://test123.vibeid.co/auth/confirm?extensionId=${EXT_ID}`
-
-    const { buildApp } = await import('../src/app')
-    const app = await buildApp()
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/auth/signup',
-      payload: {
-        email: 'new@example.com',
-        password: 'secret12',
-        redirectTo: derivedRedirect,
-      },
-    })
-
-    expect(res.statusCode).toBe(200)
-    expect(authMocks.signUp).toHaveBeenCalledWith({
-      email: 'new@example.com',
-      password: 'secret12',
-      options: { emailRedirectTo: derivedRedirect },
-    })
   })
 })
