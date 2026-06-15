@@ -58,7 +58,6 @@ describe('GET /auth/google/url', () => {
     process.env.SUPABASE_SECRET_KEY = 'sb_secret_test'
     process.env.DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:5432/postgres'
     delete process.env.AUTH_ALLOWED_REDIRECT_PREFIX
-    delete process.env.CHECKOUT_SUCCESS_URL
 
     const { buildApp } = await import('../src/app')
     const app = await buildApp()
