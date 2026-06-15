@@ -142,6 +142,7 @@ describe('POST /auth/forgot-password', () => {
   it('rejects disallowed redirect targets', async () => {
     setTestEnv()
     delete process.env.AUTH_ALLOWED_REDIRECT_PREFIX
+    delete process.env.CHECKOUT_SUCCESS_URL
 
     const { buildApp } = await import('../src/app')
     const app = await buildApp()
@@ -158,6 +159,31 @@ describe('POST /auth/forgot-password', () => {
     expect(res.statusCode).toBe(400)
     expect(res.json()).toEqual({ error: 'redirect_not_allowed' })
     expect(authMocks.resetPasswordForEmail).not.toHaveBeenCalled()
+  })
+
+  it('allows recovery redirects derived from CHECKOUT_SUCCESS_URL', async () => {
+    setTestEnv()
+    delete process.env.AUTH_ALLOWED_REDIRECT_PREFIX
+    process.env.CHECKOUT_SUCCESS_URL = 'https://test123.vibeid.co/checkout/success'
+    const derivedRedirect = `https://test123.vibeid.co/auth/recovery?extensionId=${EXT_ID}`
+
+    const { buildApp } = await import('../src/app')
+    const app = await buildApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/forgot-password',
+      payload: {
+        email: 'user@example.com',
+        redirectTo: derivedRedirect,
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ ok: true })
+    expect(authMocks.resetPasswordForEmail).toHaveBeenCalledWith('user@example.com', {
+      redirectTo: derivedRedirect,
+    })
   })
 })
 

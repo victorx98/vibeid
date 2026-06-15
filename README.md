@@ -187,7 +187,7 @@ Add your extension redirect to `additional_redirect_urls` in `supabase/config.to
 
 Required (same as email/password auth): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`.
 
-Optional: `AUTH_ALLOWED_REDIRECT_PREFIX` — fallback allow-list when `redirectTo` is not a `chromiumapp.org` URL.
+Optional: `AUTH_ALLOWED_REDIRECT_PREFIX` — allow-list when `redirectTo` is not a `chromiumapp.org` URL. When unset, the server derives `{CHECKOUT_SUCCESS_URL origin}/auth/recovery` instead.
 
 ### 5. Extension contract (implemented in the extension repo)
 
@@ -208,7 +208,7 @@ When Supabase requires email confirmation, the verification link must land on a 
 
 Configure allow-lists:
 
-- **Backend:** `AUTH_ALLOWED_REDIRECT_PREFIX=http://localhost:3000/auth/recovery` (or your hosted recovery URL prefix — signup confirm URLs on the same origin are also allowed)
+- **Backend:** `AUTH_ALLOWED_REDIRECT_PREFIX=http://localhost:3000/auth/recovery`, or set `CHECKOUT_SUCCESS_URL` and omit the prefix (hosted: `https://<api>/checkout/success` → allows `https://<api>/auth/recovery` and sibling `/auth/confirm`)
 - **Supabase:** add `https://vibeid.co/auth/confirm` (and local `http://127.0.0.1:3000/auth/confirm`) to redirect URLs; set **Site URL** to your production API origin (e.g. `https://vibeid.co`), not `localhost`
 
 ### 7. Password recovery (extension contract)
@@ -223,7 +223,7 @@ Supabase sends the reset email; no custom SMTP is required (hosted Supabase uses
 
 Configure allow-lists:
 
-- **Backend:** `AUTH_ALLOWED_REDIRECT_PREFIX=http://localhost:3000/auth/recovery` (or your hosted recovery URL prefix)
+- **Backend:** `AUTH_ALLOWED_REDIRECT_PREFIX=http://localhost:3000/auth/recovery`, or set `CHECKOUT_SUCCESS_URL` and omit the prefix (hosted: `https://<api>/checkout/success` → allows `https://<api>/auth/recovery`)
 - **Supabase:** add `http://127.0.0.1:3000/auth/recovery` and `/auth/confirm` (and production equivalents) to redirect URLs
 
 ### 8. Verify

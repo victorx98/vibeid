@@ -13,6 +13,26 @@ export function getEnv(name: string): string | null {
   return value ? value : null
 }
 
+/**
+ * Allowed non-chromiumapp redirect prefix for OAuth and password recovery.
+ * Uses AUTH_ALLOWED_REDIRECT_PREFIX when set; otherwise derives
+ * `{CHECKOUT_SUCCESS_URL origin}/auth/recovery` so hosted deploys can reuse
+ * an existing checkout URL without a separate env var.
+ */
+export function getAllowedOAuthRedirectPrefix(): string | null {
+  const explicit = getEnv('AUTH_ALLOWED_REDIRECT_PREFIX')
+  if (explicit) return explicit
+
+  const checkoutSuccessUrl = getEnv('CHECKOUT_SUCCESS_URL')
+  if (!checkoutSuccessUrl) return null
+
+  try {
+    return `${new URL(checkoutSuccessUrl).origin}/auth/recovery`
+  } catch {
+    return null
+  }
+}
+
 export function requireEnv(name: string): string {
   const value = getEnv(name)
   if (!value) throw new Error(`${name} is not configured`)
