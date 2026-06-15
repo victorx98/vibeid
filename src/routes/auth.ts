@@ -47,6 +47,37 @@ interface SessionLike {
   expires_in?: number
 }
 
+interface AuthApiErrorLike {
+  status?: number
+  code?: string
+  message?: string
+}
+
+const PASSWORD_RECOVERY_DEFAULT_RETRY_SECONDS = 60
+
+function isPasswordRecoveryRateLimited(error: AuthApiErrorLike): boolean {
+  if (error.status === 429) return true
+
+  const code = error.code ?? ''
+  if (code === 'over_email_send_rate_limit' || code === 'over_request_rate_limit') {
+    return true
+  }
+
+  if (/once every \d+ seconds/i.test(error.message ?? '')) {
+    return true
+  }
+
+  return false
+}
+
+function getPasswordRecoveryRetryAfterSeconds(error: AuthApiErrorLike): number {
+  const match = error.message?.match(/once every (\d+) seconds/i)
+  if (match) {
+    return Math.max(Number.parseInt(match[1], 10), 1)
+  }
+  return PASSWORD_RECOVERY_DEFAULT_RETRY_SECONDS
+}
+
 function serializeSession(session: SessionLike | null) {
   if (!session) return null
   return {
@@ -199,7 +230,7 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/auth/forgot-password', async (request, reply) => {
     try {
       const { email, redirectTo } = forgotPasswordSchema.parse(request.body)
-      if (!isAllowedOAuthRedirect(redirectTo, "https://test123.vibeid.co/auth/recovery")) {
+      if (!isAllowedOAuthRedirect(redirectTo, getEnv('AUTH_ALLOWED_REDIRECT_PREFIX'))) {
         return reply.code(400).send({ error: 'redirect_not_allowed' })
       }
 
@@ -207,8 +238,21 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
       const { data, error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo })
 
       if (error) {
-        // Do not reveal whether the email is registered.
-        logError('auth_forgot_password_failed', error, { email })
+        const authError = error as AuthApiErrorLike
+        // Do not reveal whether the email is registered (except for rate limits).
+        logError('auth_forgot_password_failed', error, {
+          code: authError.code,
+          status: authError.status,
+          message: authError.message,
+        })
+
+        if (isPasswordRecoveryRateLimited(authError)) {
+          const retryAfterSeconds = getPasswordRecoveryRetryAfterSeconds(authError)
+          return reply
+            .code(429)
+            .header('Retry-After', String(retryAfterSeconds))
+            .send({ error: 'rate_limited', retryAfterSeconds })
+        }
       }
 
       return reply.send({ ok: true })
