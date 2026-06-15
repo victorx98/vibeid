@@ -199,7 +199,7 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/auth/forgot-password', async (request, reply) => {
     try {
       const { email, redirectTo } = forgotPasswordSchema.parse(request.body)
-      if (!isAllowedOAuthRedirect(redirectTo, getEnv('AUTH_ALLOWED_REDIRECT_PREFIX'))) {
+      if (!isAllowedOAuthRedirect(redirectTo, "https://test123.vibeid.co/auth/recovery")) {
         return reply.code(400).send({ error: 'redirect_not_allowed' })
       }
 
