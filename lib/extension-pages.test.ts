@@ -57,20 +57,22 @@ describe('extension page helpers', () => {
     )
   })
 
-  it('renders a cancel bridge page that redirects to purchase.html', () => {
+  it('renders a cancel bridge page that messages the extension', () => {
     const html = buildCheckoutCancelBridgeHtml(EXT_ID)
-    const targetUrl = `chrome-extension://${EXT_ID}/purchase/purchase.html`
-    expect(html).toContain(targetUrl)
-    expect(html).toContain('window.location.replace')
-    expect(html).not.toContain('chrome.runtime.sendMessage')
+    expect(html).toContain(EXT_ID)
+    expect(html).toContain('JI_CHECKOUT_CANCEL_RETURN')
+    expect(html).toContain('chrome.runtime.sendMessage')
+    expect(html).not.toContain('window.location.replace')
+    expect(html).not.toContain('chrome-extension://')
   })
 
-  it('renders a success bridge page that redirects to success.html', () => {
+  it('renders a success bridge page that messages the extension', () => {
     const html = buildCheckoutSuccessBridgeHtml(EXT_ID)
-    const targetUrl = `chrome-extension://${EXT_ID}/purchase/success.html`
-    expect(html).toContain(targetUrl)
-    expect(html).toContain('window.location.replace')
-    expect(html).not.toContain('chrome.runtime.sendMessage')
+    expect(html).toContain(EXT_ID)
+    expect(html).toContain('JI_CHECKOUT_SUCCESS_RETURN')
+    expect(html).toContain('chrome.runtime.sendMessage')
+    expect(html).not.toContain('window.location.replace')
+    expect(html).not.toContain('chrome-extension://')
   })
 
   it('builds password recovery redirect URLs', () => {
