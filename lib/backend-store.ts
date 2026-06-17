@@ -438,6 +438,38 @@ export async function createPendingOrder(input: {
   return result.rows[0].id
 }
 
+export async function getOrderByCheckoutSessionId(
+  checkoutSessionId: string
+): Promise<{ id: string; user_id: string } | null> {
+  const result = await query<{ id: string; user_id: string }>(
+    `
+      select id, user_id
+      from billing.orders
+      where stripe_checkout_session_id = $1
+      limit 1
+    `,
+    [checkoutSessionId]
+  )
+  return result.rows[0] ?? null
+}
+
+export async function getLatestCheckoutSessionIdForUser(
+  userId: string
+): Promise<string | null> {
+  const result = await query<{ stripe_checkout_session_id: string }>(
+    `
+      select stripe_checkout_session_id
+      from billing.orders
+      where user_id = $1
+        and stripe_checkout_session_id is not null
+      order by created_at desc
+      limit 1
+    `,
+    [userId]
+  )
+  return result.rows[0]?.stripe_checkout_session_id ?? null
+}
+
 export async function attachCheckoutSessionToOrder(input: {
   orderId: string
   checkoutSessionId: string

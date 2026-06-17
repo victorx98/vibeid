@@ -99,6 +99,10 @@ export const checkoutRequestSchema = z.object({
   extensionId: extensionIdSchema.optional(),
 })
 
+export const syncCheckoutRequestSchema = z.object({
+  checkoutSessionId: z.string().trim().min(1).optional(),
+})
+
 export const checkoutConfirmRequestSchema = z.object({
   productTier: checkoutProductTierSchema,
 })
