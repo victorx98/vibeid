@@ -6,6 +6,8 @@ import {
   attachCheckoutSessionToOrder,
   createPendingOrder,
   getActiveEntitlements,
+  getLatestCheckoutSessionIdForUser,
+  getOrderByCheckoutSessionId,
   insertStripeEvent,
   markOrderCanceled,
   markOrderPaidAndGrantEntitlements,
@@ -22,7 +24,7 @@ import {
 import { logError, logInfo, logWarn } from '../../lib/logger'
 import { RATE_LIMITS, checkRateLimit, createRateLimitHeaders } from '../../lib/rate-limit'
 import { billingKillSwitchEnabled } from '../../lib/runtime-config'
-import { checkoutRequestSchema } from '../../lib/validation'
+import { checkoutRequestSchema, syncCheckoutRequestSchema } from '../../lib/validation'
 
 function getStripe(): Stripe {
   return new Stripe(requireEnv('STRIPE_SECRET_KEY'))
@@ -34,7 +36,16 @@ function getPaymentIntentId(session: Stripe.Checkout.Session): string | null {
   return typeof paymentIntent === 'string' ? paymentIntent : paymentIntent.id
 }
 
-async function handleCheckoutSessionPaid(sessionId: string): Promise<void> {
+function buildCheckoutSuccessUrl(baseSuccessUrl: string, extensionId: string | null): string {
+  const withExtension = extensionId
+    ? appendExtensionIdToUrl(baseSuccessUrl, extensionId)
+    : baseSuccessUrl
+  const url = new URL(withExtension)
+  url.searchParams.set('session_id', '{CHECKOUT_SESSION_ID}')
+  return url.toString()
+}
+
+async function handleCheckoutSessionPaid(sessionId: string): Promise<boolean> {
   const session = await getStripe().checkout.sessions.retrieve(sessionId, {
     expand: ['payment_intent'],
   })
@@ -44,7 +55,7 @@ async function handleCheckoutSessionPaid(sessionId: string): Promise<void> {
       sessionId: session.id,
       paymentStatus: session.payment_status,
     })
-    return
+    return false
   }
 
   const granted = await markOrderPaidAndGrantEntitlements({
@@ -57,13 +68,14 @@ async function handleCheckoutSessionPaid(sessionId: string): Promise<void> {
 
   if (!granted) {
     logWarn('stripe_checkout_order_missing', { sessionId: session.id })
-    return
+    return false
   }
 
   logInfo('stripe_entitlement_granted', {
     orderId: granted.orderId,
     productTier: granted.productTier,
   })
+  return true
 }
 
 export default async function billingRoutes(app: FastifyInstance): Promise<void> {
@@ -125,7 +137,7 @@ export default async function billingRoutes(app: FastifyInstance): Promise<void>
         ? appendExtensionIdToUrl(baseCancelUrl, extensionId)
         : baseCancelUrl
 
-      const successUrl = extensionId ? appendExtensionIdToUrl(baseSuccessUrl, extensionId) : baseSuccessUrl
+      const successUrl = buildCheckoutSuccessUrl(baseSuccessUrl, extensionId)
 
       const userId = request.authUser!.id
       const orderId = await createPendingOrder({ userId, productTier })
@@ -155,6 +167,42 @@ export default async function billingRoutes(app: FastifyInstance): Promise<void>
       }
       logError('checkout_session_failed', error)
       return reply.code(500).send({ error: '支付订单创建失败，请稍后再试' })
+    }
+  })
+
+  app.post('/billing/sync-checkout', { preHandler: app.authenticate }, async (request, reply) => {
+    if (!databaseConfigured()) {
+      return reply.code(503).send({ error: '订单系统未配置，请稍后再试' })
+    }
+
+    try {
+      const { checkoutSessionId } = syncCheckoutRequestSchema.parse(request.body ?? {})
+      let sessionId = checkoutSessionId ?? null
+
+      if (sessionId) {
+        const order = await getOrderByCheckoutSessionId(sessionId)
+        if (!order || order.user_id !== request.authUser!.id) {
+          return reply.code(403).send({ error: 'forbidden' })
+        }
+      } else {
+        sessionId = await getLatestCheckoutSessionIdForUser(request.authUser!.id)
+        if (!sessionId) {
+          return reply.code(404).send({ error: 'checkout_not_found' })
+        }
+      }
+
+      await handleCheckoutSessionPaid(sessionId)
+      const tiers = await getActiveEntitlements(request.authUser!.id)
+      return reply.send({
+        tiers,
+        premium: tiers.includes('premium'),
+      })
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({ error: '请求参数不合法' })
+      }
+      logError('checkout_sync_failed', error)
+      return reply.code(500).send({ error: 'entitlements_failed' })
     }
   })
 

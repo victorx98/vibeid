@@ -193,10 +193,11 @@ export function buildCheckoutSuccessBridgeHtml(extensionId: string): string {
         showFallback();
         return;
       }
+      var checkoutSessionId = new URLSearchParams(window.location.search).get('session_id');
       document.body.style.visibility = 'hidden';
       chrome.runtime.sendMessage(
         extensionId,
-        { type: 'JI_CHECKOUT_SUCCESS_RETURN' },
+        { type: 'JI_CHECKOUT_SUCCESS_RETURN', checkoutSessionId: checkoutSessionId },
         function (response) {
           if (chrome.runtime.lastError || !response || !response.ok) {
             document.body.style.visibility = '';
