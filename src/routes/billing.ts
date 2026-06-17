@@ -94,11 +94,11 @@ export default async function billingRoutes(app: FastifyInstance): Promise<void>
   })
 
   app.post('/billing/checkout', { preHandler: app.authenticate }, async (request, reply) => {
-    const rateLimit = checkRateLimit(request, RATE_LIMITS.checkoutSession)
-    reply.headers(createRateLimitHeaders(rateLimit))
-    if (!rateLimit.allowed) {
-      return reply.code(429).send({ error: '请求过于频繁，请稍后再试' })
-    }
+    // const rateLimit = checkRateLimit(request, RATE_LIMITS.checkoutSession)
+    // reply.headers(createRateLimitHeaders(rateLimit))
+    // if (!rateLimit.allowed) {
+      // return reply.code(429).send({ error: '请求过于频繁，请稍后再试' })
+    // }
 
     if (!databaseConfigured()) {
       return reply.code(503).send({ error: '订单系统未配置，请稍后再试' })
