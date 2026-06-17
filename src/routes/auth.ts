@@ -11,6 +11,7 @@ import {
 } from '../../lib/extension-pages'
 import { buildGoogleAuthorizeUrl, isAllowedOAuthRedirect } from '../../lib/google-oauth'
 import { logError } from '../../lib/logger'
+import { query } from '../../lib/db'
 import { createSupabaseAdminClient, createSupabaseAnonClient } from '../../lib/supabase/server'
 
 const credentialsSchema = z.object({
@@ -93,6 +94,22 @@ function serializeUser(user: { id: string; email?: string | null } | null) {
   return { id: user.id, email: user.email ?? null }
 }
 
+async function authUserExistsByEmail(email: string): Promise<boolean> {
+  const { rows } = await query<{ exists: boolean }>(
+    'select exists(select 1 from auth.users where lower(email) = lower($1)) as exists',
+    [email]
+  )
+  return rows[0]?.exists ?? false
+}
+
+function mapSignupError(message: string) {
+  const normalized = message.toLowerCase()
+  if (normalized.includes('already registered') || normalized.includes('already been registered')) {
+    return 'email_already_registered'
+  }
+  return 'signup_failed'
+}
+
 export default async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/auth/signup', async (request, reply) => {
     try {
@@ -119,7 +136,7 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
       })
 
       if (error) {
-        return reply.code(400).send({ error: error.message })
+        return reply.code(400).send({ error: mapSignupError(error.message), message: error.message })
       }
 
       return reply.send({
@@ -139,6 +156,11 @@ export default async function authRoutes(app: FastifyInstance): Promise<void> {
     try {
       const { email, password } = credentialsSchema.parse(request.body)
       const supabase = createSupabaseAnonClient()
+      const userExists = await authUserExistsByEmail(email)
+      if (!userExists) {
+        return reply.code(401).send({ error: 'email_not_registered' })
+      }
+
       const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
       if (error || !data.session) {
